@@ -1,0 +1,24 @@
+[[https://support.mozilla.org/en-US/kb/future-of-pocket][Pocket is shutting down]]
+
+I don't trust that anyone else who has alternatives is going to be able to necessarily be around forever so I guess I have to make it myself.
+* Requirements
+So here's what I want
+
+** Goals
+- A browser extension that I can trigger on any link
+- An Android app that I can share links to
+- The ability to tag links
+- The ability to search stored links searching across both tags and text
+- Keep costs low. We can use AWS or something, but I want to stay within the free tier as much as possible
+- Some sort of monitoring
+
+** Nice-to-haves
+- Store the full article text
+- Ability to pierce paywalls somewhat
+- Use the archive link if the full link has a paywall
+- AI-enabled search via embeddings
+
+** Non-goals
+- Dealing with the app store, I'll side-load the app if need be
+- Multi-tenancy, I'm ok with just a single account for the entire instance
+- Scale

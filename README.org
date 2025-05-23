@@ -17,6 +17,7 @@ So here's what I want
 - Ability to pierce paywalls somewhat
 - Use the archive link if the full link has a paywall
 - AI-enabled search via embeddings
+- CI/CD
 
 ** Non-goals
 - Dealing with the app store, I'll side-load the app if need be

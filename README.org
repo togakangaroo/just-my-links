@@ -1,6 +1,14 @@
 [[https://support.mozilla.org/en-US/kb/future-of-pocket][Pocket is shutting down]]
 
 I don't trust that anyone else who has alternatives is going to be able to necessarily be around forever so I guess I have to make it myself.
+
+* Setup
+
+** Project Setup
+To set up the development environment:
+
+This project uses [[https://docs.astral.sh/uv/getting-started/installation/][uv]] for managing all things Python including notebooks.
+
 * Requirements
 So here's what I want
 
@@ -29,99 +37,4 @@ So here's what I want
 ** AWS Account Configuration
 
 *** SSO
-:PROPERTIES:
-:header-args:shell+: :eval no
-:END:
-You want to configure SSO login so its easier to use AWS from your CLI which you'll need for terraform as well. You'll do this by
-- navigating to IAM Identity Center and clicking Enable
-
-The following should all be in CloudShell console in the browser
-
-Run ~aws sso-admin list-instances~ to see an instance of an organization
-
-Then create an admin permission set
-#+begin_src shell
-# Step 2: Create an Administrative Permission Set
-  aws sso-admin create-permission-set \
-  --instance-arn $(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) \
-  --name "AdministratorAccess" \
-  --description "Provides full access to AWS services and resources" \
-  --session-duration "PT8H"
-#+end_src
-We then want to attach the admin access policy to this permission set
-
-Use this to determine if the first found permission set is indeed a the admin permissions
-#+begin_src shell
-aws sso-admin describe-permission-set \
-  --instance-arn $(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) \
-  --permission-set-arn arn:aws:sso:::permissionSet/ssoins-7223f09d11292080/ps-b077eb955769d7d6
-#+end_src
-Then if so
-#+begin_src shell
-  # Attach the AWS managed policy for administrator access
-  aws sso-admin attach-managed-policy-to-permission-set \
-    --instance-arn $(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) \
-    --permission-set-arn $(aws sso-admin list-permission-sets --instance-arn $(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) --query 'PermissionSets[0]' --output text) \
-    --managed-policy-arn "arn:aws:iam::aws:policy/AdministratorAccess"
-
-  # Step 3: Add yourself as a user
-  aws identitystore create-user \
-    --identity-store-id $(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text) \
-    --user-name "gmauer@gmail.com" \
-    --name "GivenName=George,FamilyName=Mauer" \
-    --emails "Value=gmauer@gmail.com,Type=Primary" \
-    --display-name "George Mauer"
-
-  # Step 4: Assign access (assuming you have your AWS account ID)
-  aws sso-admin create-account-assignment \
-    --instance-arn $(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) \
-    --target-id $(aws sts get-caller-identity --query 'Account' --output text) \
-    --target-type AWS_ACCOUNT \
-    --permission-set-arn arn:aws:sso:::permissionSet/ssoins-7223f09d11292080/ps-b077eb955769d7d6 \
-    --principal-type USER \
-    --principal-id $(aws identitystore list-users --identity-store-id $(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text) --filters "AttributePath=UserName,AttributeValue=gmauer@gmail.com" --query 'Users[0].UserId' --output text)
-#+end_src
-You then need to set an initial password for this user. This is not doable throught eh CLI. Go to the IAM Identity Center > Users > Select your user > Reset Password Button. Generate a one-time password and copy it
-
-Now the SSO url with
-#+begin_src shell
-aws sso-admin list-instances --query 'Instances[0].IdentityCenterUrl' --output text
-#+end_src
-
-Then plug it in ~IdentityStoreId~ like this: ~https://d-00000000.awsapps.com/start~ to get your SSO url. Now from the local cli
-#+begin_src emacs-lisp :results silent
-  (async-shell-command "aws configure sso")
-#+end_src
-During login, reset your password using your password manager and ideally set up info and you will get the aws apps account screen
-
-You will see the account id right on the account listings, and can use the same sso login to create an entry in [[~/.aws/config]] that looks like this
-#+begin_src toml
-[profile personal]
-sso_start_url = https://d-00000000bba.awsapps.com/start/#
-sso_region = us-east-1
-sso_account_id = 0000000
-sso_role_name = AdministratorAccess
-sso_session_name = default
-output = json
-region = us-east-1
-#+end_src
-
-you may then
-
-#+begin_src emacs-lisp :results silent
-  (async-shell-command "export AWS_PROFILE=personal; aws sso login")
-#+end_src
-Go ahead and log in
-
-and now
-#+begin_src shell :eval never-export
-  export AWS_PROFILE=personal
-  aws s3 ls
-#+end_src
-
-#+RESULTS:
-| 2023-12-16 | 06:43:44 | cf-templates-00000-us-east-1 |
-| 2023-03-30 | 09:52:05 | deploy-staging               |
-| 2023-03-29 | 16:27:49 | turtles-music                |
-
-SSO is set up!
+Follow the steps in the jupyter notebook here to set it up [[./aws-configuration.ipynb][here.]]

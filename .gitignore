@@ -1,2 +1,7 @@
 .aider*
 .ipynb_checkpoints/
+indexing-service/.venv/
+indexing-service/__pycache__/
+indexing-service/*.pyc
+indexing-service/.pytest_cache/
+indexing-service/.coverage

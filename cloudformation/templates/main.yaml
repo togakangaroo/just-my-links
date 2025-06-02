@@ -384,7 +384,7 @@ Resources:
       FunctionName: !Ref IndexDocumentFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "${ApiGateway}/*/POST/index-document"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/index-document"
 
   # API Gateway Deployment
   ApiGatewayDeployment:

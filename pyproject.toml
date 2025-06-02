@@ -2,7 +2,7 @@
 name = "just-my-links"
 version = "0.1.0"
 description = "A cloud-based, personal, self 'hosted' (except its in the cloud) url/bookmarking service."
-readme = "README.md"
+readme = "README.ipynb"
 requires-python = ">=3.13.0"
 dependencies = [
     "chromadb>=1.0.12",

@@ -338,6 +338,7 @@ Resources:
           BEARER_TOKEN_SECRET_ARN: !Ref BearerTokenSecret
           EVENT_BUS_NAME: !Sub "${Environment}-just-my-links"
           CHROMADB_PATH: /mnt/chromadb
+          ENVIRONMENT_NAME: !Ref Environment
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -417,3 +418,9 @@ Outputs:
   EcrRepositoryUri:
     Description: ECR Repository URI
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+
+  BearerTokenSecretName:
+    Description: Name of the bearer token secret in Secrets Manager
+    Value: !Ref BearerTokenSecret
+    Export:
+      Name: !Sub "${Environment}-just-my-links-bearer-token-secret-name"

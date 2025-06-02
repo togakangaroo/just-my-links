@@ -30,10 +30,6 @@ aws cloudformation deploy \
 
 echo "Deployment complete!"
 
-# Output the API Gateway URL
-API_URL=$(aws cloudformation describe-stacks \
+aws cloudformation describe-stacks \
     --stack-name $STACK_NAME \
-    --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' \
-    --output text)
-
-echo "API Gateway URL: $API_URL"
+    --query 'Stacks[0].Outputs'

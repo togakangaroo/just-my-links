@@ -172,6 +172,25 @@ Resources:
     Properties:
       RepositoryName: !Sub "${Environment}-just-my-links-lambda"
       ImageTagMutability: MUTABLE
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaECRImageRetrievalPolicy
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              StringLike:
+                aws:sourceArn: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          - Sid: AllowAdminAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - ecr:*
       LifecyclePolicy:
         LifecyclePolicyText: |
           {

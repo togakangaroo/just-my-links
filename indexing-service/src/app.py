@@ -26,7 +26,7 @@ def get_bearer_token() -> str:
     """Get bearer token from Secrets Manager with caching"""
     environment_name = os.getenv("ENVIRONMENT_NAME", "dev")
     secret_name = f"{environment_name}-just-my-links-bearer-token"
-    
+
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
         logger.debug("Bearer token retrieved from Secrets Manager")
@@ -39,21 +39,21 @@ def get_bearer_token() -> str:
 def authenticate_request() -> bool:
     """Authenticate the request using bearer token"""
     auth_header = app.current_event.headers.get("Authorization", "")
-    
+
     if not auth_header.startswith("Bearer "):
         logger.warning("Missing or invalid Authorization header format")
         return False
-    
+
     provided_token = auth_header[7:]  # Remove "Bearer " prefix
     expected_token = get_bearer_token()
-    
+
     # Use secrets.compare_digest for safe string comparison
     is_valid = secrets.compare_digest(provided_token, expected_token)
-    
+
     if not is_valid:
         logger.warning("Invalid bearer token provided")
         metrics.add_metric(name="AuthenticationFailures", unit=MetricUnit.Count, value=1)
-    
+
     return is_valid
 
 
@@ -62,7 +62,7 @@ def authenticate_request() -> bool:
 def index_document():
     """Handle document indexing requests"""
     logger.info("Received document indexing request")
-    
+
     # Authenticate the request
     if not authenticate_request():
         metrics.add_metric(name="UnauthorizedRequests", unit=MetricUnit.Count, value=1)

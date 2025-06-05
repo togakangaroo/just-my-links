@@ -26,6 +26,7 @@ aws cloudformation deploy \
     --stack-name $STACK_NAME \
     --parameter-overrides $PARAMS $ADDITIONAL_PARAMS \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+    --tags just-my-links=$ENVIRONMENT \
     --no-fail-on-empty-changeset
 
 echo "Deployment complete!"

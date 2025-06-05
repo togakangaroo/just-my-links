@@ -1090,6 +1090,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "ipython" },
     { name = "jupyter" },
+    { name = "requests" },
 ]
 
 [package.metadata]
@@ -1098,6 +1099,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=1.0.12" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "requests", specifier = ">=2.32.3" },
 ]
 
 [[package]]

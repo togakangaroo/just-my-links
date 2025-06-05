@@ -108,11 +108,6 @@ Resources:
       Name: !Sub "${Environment}-just-my-links-bearer-token"
       Description: Bearer token for Just My Links API authentication
       SecretString: !Ref BearerToken
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Application
-          Value: just-my-links
 
   # ============================================================================
   # STORAGE RESOURCES
@@ -128,8 +123,6 @@ Resources:
       FileSystemTags:
         - Key: Name
           Value: !Sub "${Environment}-just-my-links-chromadb"
-        - Key: Environment
-          Value: !Ref Environment
 
   # EFS Mount Targets
   EfsMountTarget1:
@@ -209,9 +202,6 @@ Resources:
               }
             ]
           }
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
 
   # S3 Bucket for Log Backup
   LogsBucket:
@@ -231,9 +221,6 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
 
   # ============================================================================
   # MONITORING RESOURCES
@@ -280,9 +267,6 @@ Resources:
     Type: AWS::Events::EventBus
     Properties:
       Name: !Sub "${Environment}-just-my-links"
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
 
   # ============================================================================
   # COMPUTE RESOURCES
@@ -336,6 +320,7 @@ Resources:
     Condition: IsNotFirstRunCondition
     Properties:
       FunctionName: !Sub "${Environment}-just-my-links-index-document"
+      Description: "Just My Links - index submitted documents"
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:latest"

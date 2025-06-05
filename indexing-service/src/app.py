@@ -8,7 +8,7 @@ import boto3
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.metrics import MetricUnit
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response, content_types
+from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
 from aws_lambda_powertools.event_handler.middlewares import NextMiddleware
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
@@ -16,7 +16,7 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 logger = Logger(level=os.getenv("LOG_LEVEL", "INFO"))
 tracer = Tracer()
 metrics = Metrics(namespace="just-my-links")
-app = APIGatewayRestResolver()
+app = APIGatewayHttpResolver()
 
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
@@ -26,13 +26,13 @@ secrets_client = boto3.client('secretsmanager')
 def get_bearer_token() -> str:
     """Get bearer token from Secrets Manager with caching"""
     secret_arn = os.getenv("BEARER_TOKEN_SECRET_ARN")
-    
+    logger.debug("Will fetch token from Secrets Manager", extra={"secret_arn":secret_arn})
+
     if not secret_arn:
         logger.error("BEARER_TOKEN_SECRET_ARN environment variable not set")
         raise ValueError("BEARER_TOKEN_SECRET_ARN environment variable not set")
 
     try:
-        logger.debug("Getting bearer token from Secrets Manager", extra={"secret_arn":secret_arn})
         response = secrets_client.get_secret_value(SecretId=secret_arn)
         logger.debug("Bearer token retrieved from Secrets Manager")
         return response['SecretString']
@@ -48,9 +48,11 @@ def _unauthorized_request() -> Response:
         body={"error": "Unauthorized"})
 
 
-def authentication_middleware(app: APIGatewayRestResolver, next_middleware: NextMiddleware) -> Response:
+def authentication_middleware(app: APIGatewayHttpResolver, next_middleware: NextMiddleware) -> Response:
     """Middleware to authenticate requests using bearer token"""
-    auth_header = app.current_event.headers.get("Authorization", "")
+
+    headers = getattr(app.current_event, 'headers', None) or {}
+    auth_header = headers.get("Authorization", "")
 
     if not auth_header.startswith("Bearer "):
         return _unauthorized_request()
@@ -69,7 +71,11 @@ def authentication_middleware(app: APIGatewayRestResolver, next_middleware: Next
     return next_middleware(app)
 
 
-@app.post("/index-document", middlewares=[authentication_middleware])
+# Register global middleware
+app.use(middlewares=[authentication_middleware])
+
+
+@app.post("/index-document")
 @tracer.capture_method
 def index_document():
     """Handle document indexing requests"""
@@ -89,26 +95,31 @@ def index_document():
     )
 
 
-@app.exception_handler(Exception)
-def handle_generic_exception(ex: Exception):
-    """Handle any unhandled exceptions"""
-    logger.exception("Unhandled exception occurred", extra={"error": str(ex)})
-    metrics.add_metric(name="UnhandledExceptions", unit=MetricUnit.Count, value=1)
-
-    return Response(
-        status_code=500,
-        content_type=content_types.APPLICATION_JSON,
-        body={
-            "error": "Internal server error",
-            "message": "An unexpected error occurred"
-        }
-    )
-
 
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
     """Lambda handler function"""
-    logger.info("Lambda handler invoked", extra={"event_type": event.get("httpMethod", "unknown")})
-    return app.resolve(event, context)
+    try:
+        logger.info("Lambda handler invoked", extra={"event_type": event.get("httpMethod", "unknown")})
+        return app.resolve(event, context)
+    except Exception as e:
+        logger.exception("Unhandled exception in lambda_handler", extra={
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "event": event
+        })
+        metrics.add_metric(name="UnhandledExceptions", unit=MetricUnit.Count, value=1)
+        
+        # Return a proper API Gateway response
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": json.dumps({
+                "error": "Internal server error",
+                "message": "An unexpected error occurred"
+            })
+        }

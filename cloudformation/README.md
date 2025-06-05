@@ -5,9 +5,8 @@ This directory contains the CloudFormation templates for the Just My Links appli
 ## Architecture Overview
 
 The infrastructure consists of:
-- **VPC & Networking**: Private subnets, security groups for Lambda
-- **Storage**: EFS for ChromaDB, S3 for log backup, ECR for container images
-- **Compute**: Lambda function with EFS mount, API Gateway REST endpoint
+- **Storage**: S3 for ChromaDB and log backup, ECR for container images
+- **Compute**: Lambda function, API Gateway HTTP endpoint
 - **Events**: EventBridge custom bus for document storage events
 - **Monitoring**: CloudWatch alarms, SNS notifications for S3 size alerts
 - **Security**: Secrets Manager for bearer token authentication
@@ -26,10 +25,5 @@ The infrastructure consists of:
 
 ## Template Structure
 
-- `main.yaml` - Root stack that orchestrates nested stacks
-- `templates/networking.yaml` - VPC, subnets, security groups
-- `templates/storage.yaml` - EFS, S3, ECR repositories
-- `templates/compute.yaml` - Lambda function, API Gateway
-- `templates/monitoring.yaml` - CloudWatch alarms, SNS topics
-- `templates/secrets.yaml` - Secrets Manager resources
+- `main.yaml` - Complete infrastructure stack
 - `parameters/` - Environment-specific parameter files

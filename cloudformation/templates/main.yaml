@@ -33,69 +33,6 @@ Conditions:
       - "true"
 
 Resources:
-  # ============================================================================
-  # NETWORKING RESOURCES
-  # ============================================================================
-
-  # VPC
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-vpc"
-
-  # Private Subnets (for Lambda and EFS)
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-private-subnet-1"
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-private-subnet-2"
-
-  # Security Group for Lambda
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for Just My Links Lambda function
-      VpcId: !Ref VPC
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-lambda-sg"
-
-  # Security Group for EFS
-  EfsSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for Just My Links EFS
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-efs-sg"
 
   # ============================================================================
   # SECRETS RESOURCES
@@ -112,52 +49,6 @@ Resources:
   # ============================================================================
   # STORAGE RESOURCES
   # ============================================================================
-
-  # EFS File System for ChromaDB
-  EfsFileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      PerformanceMode: generalPurpose
-      ThroughputMode: bursting
-      Encrypted: true
-      FileSystemTags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-chromadb"
-
-  # EFS Mount Targets
-  EfsMountTarget1:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PrivateSubnet1
-      SecurityGroups:
-        - !Ref EfsSecurityGroup
-
-  EfsMountTarget2:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !Ref PrivateSubnet2
-      SecurityGroups:
-        - !Ref EfsSecurityGroup
-
-  # EFS Access Point for Lambda
-  EfsAccessPoint:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: 1000
-        Gid: 1000
-      RootDirectory:
-        Path: /chromadb
-        CreationInfo:
-          OwnerUid: 1000
-          OwnerGid: 1000
-          Permissions: 755
-      AccessPointTags:
-        - Key: Name
-          Value: !Sub "${Environment}-just-my-links-chromadb-access-point"
 
   # ECR Repository for Lambda Container
   EcrRepository:
@@ -203,18 +94,23 @@ Resources:
             ]
           }
 
-  # S3 Bucket for Log Backup
-  LogsBucket:
+  # S3 Bucket for all application data
+  ApplicationBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${Environment}-just-my-links-logs-${AWS::AccountId}"
+      BucketName: !Sub "just-my-links-${Environment}-${AWS::AccountId}"
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
         Rules:
           - Id: DeleteOldLogs
             Status: Enabled
+            Prefix: logs/
             ExpirationInDays: 90
+            NoncurrentVersionExpirationInDays: 30
+          - Id: DeleteOldChromaDBVersions
+            Status: Enabled
+            Prefix: chromadb/
             NoncurrentVersionExpirationInDays: 30
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -246,7 +142,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${Environment}-just-my-links-s3-bucket-size"
-      AlarmDescription: Alert when S3 logs bucket exceeds size threshold
+      AlarmDescription: Alert when S3 application bucket exceeds size threshold
       MetricName: BucketSizeBytes
       Namespace: AWS/S3
       Statistic: Average
@@ -256,7 +152,7 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Dimensions:
         - Name: BucketName
-          Value: !Ref LogsBucket
+          Value: !Ref ApplicationBucket
         - Name: StorageType
           Value: StandardStorage
       AlarmActions:
@@ -285,18 +181,8 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: EFSAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - elasticfilesystem:ClientMount
-                  - elasticfilesystem:ClientWrite
-                  - elasticfilesystem:ClientRootAccess
-                Resource: !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EfsFileSystem}"
         - PolicyName: SecretsManagerAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -313,6 +199,19 @@ Resources:
                 Action:
                   - events:PutEvents
                 Resource: !GetAtt EventBus.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource: 
+                  - !Sub "${ApplicationBucket.Arn}/*"
+                  - !GetAtt ApplicationBucket.Arn
 
   # Lambda Function
   IndexDocumentFunction:
@@ -328,20 +227,11 @@ Resources:
       Timeout: 300
       MemorySize: 1024
       ReservedConcurrentExecutions: 1  # Single concurrent execution
-      VpcConfig:
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-        SubnetIds:
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
-      FileSystemConfigs:
-        - Arn: !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/${EfsAccessPoint}"
-          LocalMountPath: /mnt/chromadb
       Environment:
         Variables:
           BEARER_TOKEN_SECRET_ARN: !Ref BearerTokenSecret
           EVENT_BUS_NAME: !Sub "${Environment}-just-my-links"
-          CHROMADB_PATH: /mnt/chromadb
+          APPLICATION_BUCKET: !Ref ApplicationBucket
           ENVIRONMENT_NAME: !Ref Environment
       Tags:
         - Key: Environment
@@ -411,11 +301,11 @@ Outputs:
     Export:
       Name: !Sub "${Environment}-just-my-links-api-url"
 
-  EfsFileSystemId:
-    Description: EFS File System ID for CLI access
-    Value: !Ref EfsFileSystem
+  ApplicationBucketName:
+    Description: S3 Bucket name for application data (ChromaDB and logs)
+    Value: !Ref ApplicationBucket
     Export:
-      Name: !Sub "${Environment}-just-my-links-efs-id"
+      Name: !Sub "${Environment}-just-my-links-application-bucket"
 
   LambdaFunctionArn:
     Condition: IsNotFirstRunCondition

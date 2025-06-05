@@ -20,6 +20,7 @@ app = APIGatewayHttpResolver()
 
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
+s3_client = boto3.client('s3')
 
 
 @cache
@@ -85,13 +86,17 @@ def index_document():
     request_body = app.current_event.body
     logger.debug("Request body received", extra={"body_length": len(request_body) if request_body else 0})
 
+    # Get application bucket name
+    application_bucket = os.getenv("APPLICATION_BUCKET")
+    logger.debug("Application bucket configured", extra={"bucket": application_bucket})
+
     # Add custom metric
     # metrics.add_metric(name="DocumentIndexRequests", unit=MetricUnit.Count, value=1)
 
     return Response(
         status_code=501,
         content_type=content_types.APPLICATION_JSON,
-        body={"message": "Not yet implemented"}
+        body={"message": "Not yet implemented - will download ChromaDB from S3, operate locally, then upload back"}
     )
 
 

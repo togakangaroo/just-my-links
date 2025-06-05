@@ -190,11 +190,11 @@ Resources:
             "rules": [
               {
                 "rulePriority": 1,
-                "description": "Keep last 10 images",
+                "description": "Keep last 2 images",
                 "selection": {
                   "tagStatus": "any",
                   "countType": "imageCountMoreThan",
-                  "countNumber": 10
+                  "countNumber": 2
                 },
                 "action": {
                   "type": "expire"
@@ -347,64 +347,67 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # API Gateway
-  ApiGateway:
-    Type: AWS::ApiGateway::RestApi
+  # API Gateway HTTP API
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
     Condition: IsNotFirstRunCondition
     Properties:
       Name: !Sub "${Environment}-just-my-links-api"
-      Description: Just My Links API Gateway
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
+      Description: Just My Links HTTP API
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - "*"
+        AllowMethods:
+          - "*"
+        AllowOrigins:
+          - "*"
+        MaxAge: 86400
 
-  # API Gateway Resource
-  IndexDocumentResource:
-    Type: AWS::ApiGateway::Resource
+  # HTTP API Integration
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Condition: IsNotFirstRunCondition
     Properties:
-      RestApiId: !Ref ApiGateway
-      ParentId: !GetAtt ApiGateway.RootResourceId
-      PathPart: index-document
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IndexDocumentFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
 
-  # API Gateway Method
-  IndexDocumentMethod:
-    Type: AWS::ApiGateway::Method
+  # HTTP API Route
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
     Condition: IsNotFirstRunCondition
     Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref IndexDocumentResource
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IndexDocumentFunction.Arn}/invocations"
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /index-document"
+      Target: !Sub "integrations/${HttpApiIntegration}"
 
-  # Lambda Permission for API Gateway
-  ApiGatewayLambdaPermission:
+  # HTTP API Stage
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Condition: IsNotFirstRunCondition
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  # Lambda Permission for HTTP API
+  HttpApiLambdaPermission:
     Type: AWS::Lambda::Permission
     Condition: IsNotFirstRunCondition
     Properties:
       FunctionName: !Ref IndexDocumentFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/index-document"
-
-  # API Gateway Deployment
-  ApiGatewayDeployment:
-    Type: AWS::ApiGateway::Deployment
-    Condition: IsNotFirstRunCondition
-    DependsOn: IndexDocumentMethod
-    Properties:
-      RestApiId: !Ref ApiGateway
-      StageName: !Ref Environment
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*"
 
 Outputs:
-  ApiGatewayUrl:
+  HttpApiUrl:
     Condition: IsNotFirstRunCondition
-    Description: API Gateway endpoint URL
-    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/index-document"
+    Description: HTTP API endpoint URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/index-document"
     Export:
       Name: !Sub "${Environment}-just-my-links-api-url"
 

@@ -1,7 +1,25 @@
 #!/usr/bin/env -S uv run python
 """
 Deploy script for the indexing service Lambda function.
-Builds Docker image, pushes to ECR, and updates Lambda function if it exists.
+
+This script builds the indexing-service Docker container and deploys it to AWS ECR,
+then updates the Lambda function to use the new container image. The script:
+
+1. Authenticates Docker/Podman to AWS ECR
+2. Builds the Docker image from the indexing-service directory
+3. Tags and pushes the image to ECR
+4. Updates the Lambda function code to use the new image (if the function exists)
+
+The script automatically locates the indexing-service directory relative to this
+script's location and builds the container from there.
+
+Usage:
+    ./deploy-indexing-service.py [environment] [options]
+
+Examples:
+    ./deploy-indexing-service.py dev
+    ./deploy-indexing-service.py prod --region us-west-2
+    ./deploy-indexing-service.py dev --verbose
 """
 
 import argparse
@@ -9,7 +27,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-import os  # Added import for os
 
 import boto3
 from botocore.exceptions import ClientError
@@ -59,7 +76,7 @@ def authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, v
         get_password_cmd = ['aws', 'ecr', 'get-login-password', '--region', aws_region]
         if verbose:
             print(f"Running: {' '.join(get_password_cmd)}")
-        
+
         password_result = subprocess.run(
             get_password_cmd,
             capture_output=True,
@@ -71,10 +88,10 @@ def authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, v
         # Login using podman (which is aliased to docker)
         registry_url = f"{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com"
         login_cmd = ['docker', 'login', '--username', 'AWS', '--password-stdin', registry_url]
-        
+
         if verbose:
             print(f"Running: {' '.join(login_cmd[:-1])} [password hidden]")
-        
+
         process = subprocess.Popen(
             login_cmd,
             stdin=subprocess.PIPE,
@@ -109,7 +126,8 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
     print("Building Docker image...")
 
     # Build the image
-    run_command(['docker', 'build', '-t', 'indexing-service', './indexing-service'], verbose=verbose)
+    indexing_service_path = Path(__file__).parent.parent / "indexing-service"
+    run_command(['docker', 'build', '-t', 'indexing-service', str(indexing_service_path)], verbose=verbose)
 
     # Tag for ECR
     print("Tagging image for ECR...")
@@ -125,7 +143,7 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
             if attempt > 0:
                 print(f"Re-authenticating before attempt {attempt + 1}...")
                 authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose)
-            
+
             # Use --force-compression to avoid blob checking issues with Podman
             run_command(['docker', 'push', '--force-compression', full_image_uri], verbose=verbose)
             print(f"Image pushed to ECR: {full_image_uri}")
@@ -174,7 +192,15 @@ def update_lambda_function(lambda_function_name, image_uri, aws_region):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Deploy indexing service to AWS")
+    parser = argparse.ArgumentParser(
+        description="Build and deploy the indexing service Docker container to AWS Lambda",
+        epilog="""
+This script builds the indexing-service Docker container and deploys it to AWS.
+It automatically finds the indexing-service directory relative to this script's
+location and handles the complete deployment pipeline from build to Lambda update.
+    """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         'environment',
         nargs='?',
@@ -218,9 +244,6 @@ def main():
     print(f"Building and deploying Lambda container for environment: {environment}")
 
     try:
-        # Store original directory
-        original_cwd = Path.cwd()
-
         # Authenticate Docker to ECR
         authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose)
 

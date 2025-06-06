@@ -1,7 +1,7 @@
 [project]
-name = "indexing-service"
+name = "document-storage-service"
 version = "0.1.0"
-description = "Just My Links document indexing service"
+description = "Just My Links document storage service"
 requires-python = ">=3.13"
 dependencies = [
     "aws-lambda-powertools[all]>=3.0.0",

@@ -108,8 +108,8 @@ def _get_multipart_request_body(event) -> bytes:
 
 @app.put("/document/<document_url>")
 @tracer.capture_method
-def index_document(document_url: str):
-    """Handle document indexing requests"""
+def store_document(document_url: str):
+    """Handle document storage requests"""
     # Convert document_url to a safe S3 key using hash
     document_s3_path = hashlib.sha256(document_url.encode('utf-8')).hexdigest()
     logger.debug("Generated S3 path for document", extra={"document_url": document_url, "document_s3_path": document_s3_path})

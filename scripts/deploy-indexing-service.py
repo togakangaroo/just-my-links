@@ -254,7 +254,7 @@ location and handles the complete deployment pipeline from build to Lambda updat
 
     # Construct resource names
     ecr_repository_uri = f"{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com/just-my-links-ecr-index-documents-{environment}"
-    lambda_function_name = f"just-my-links-index-documents-{environment}"
+    lambda_function_name = f"just-my-links--index-documents--{environment}"
 
     print(f"Building and deploying Lambda container for environment: {environment}")
 

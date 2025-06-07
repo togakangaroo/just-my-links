@@ -9,7 +9,8 @@ from contextlib import contextmanager
 import io
 
 import boto3
-from multipart import parse_options_header, MultipartParser
+from python_multipart.multipart import parse_options_header
+import python_multipart
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.metrics import MetricUnit
@@ -39,13 +40,13 @@ class MultipartParsingError(Exception):
 
 def _get_multipart_request_body(event) -> Dict[str, bytes]:
     """Extract and parse multipart request body from API Gateway event
-    
+
     Args:
         event: API Gateway event object
-        
+
     Returns:
         Dict[str, bytes]: Dictionary mapping part names to their content
-        
+
     Raises:
         MultipartParsingError: If parsing fails or document part is missing
     """
@@ -80,30 +81,30 @@ def _get_multipart_request_body(event) -> Dict[str, bytes]:
 
     # Parse multipart data
     try:
-        parser = MultipartParser(boundary.encode())
+        parser = python_multipart.MultipartParser(boundary.encode())
         parts = parser.parse(io.BytesIO(request_body))
-        
+
         # Extract all parts
         parsed_parts = {}
         document_found = False
-        
+
         for part in parts:
             if part.name:
                 parsed_parts[part.name] = part.raw
                 if part.name == 'document':
                     document_found = True
-        
+
         if not document_found:
             logger.error("No 'document' part found in multipart form-data")
             raise MultipartParsingError("Missing required 'document' part")
-            
+
         logger.info("Multipart parts parsed", extra={
             "part_count": len(parsed_parts),
             "part_names": list(parsed_parts.keys())
         })
-        
+
         return parsed_parts
-        
+
     except MultipartParsingError:
         raise
     except Exception as e:
@@ -160,14 +161,14 @@ def store_document(document_url: str):
         # Store all multipart files in S3
         for filename, content in multipart_parts.items():
             file_key = f"{document_folder}/{filename}"
-            
+
             # Determine content type
             content_type = 'text/plain'
             if filename.endswith('.html'):
                 content_type = 'text/html'
             elif filename.endswith('.txt'):
                 content_type = 'text/plain'
-            
+
             s3_client.put_object(
                 Bucket=application_bucket,
                 Key=file_key,
@@ -183,7 +184,7 @@ def store_document(document_url: str):
             "files": list(multipart_parts.keys()),
             "timestamp": json.dumps({"$date": {"$numberLong": str(int(__import__('time').time() * 1000))}})
         }
-        
+
         metadata_key = f"{document_folder}/.metadata.json"
         s3_client.put_object(
             Bucket=application_bucket,
@@ -200,7 +201,7 @@ def store_document(document_url: str):
                 "folderPath": document_folder,
                 "documentUrl": document_url
             }
-            
+
             eventbridge_client.put_events(
                 Entries=[
                     {
@@ -212,11 +213,11 @@ def store_document(document_url: str):
                 ]
             )
             logger.info("Published event to EventBridge", extra={"event_detail": event_detail})
-            
+
         except Exception as e:
             logger.error("Failed to publish event to EventBridge", extra={"error": str(e)})
             # Don't fail the request if event publishing fails
-            
+
     return Response(
         status_code=200,
         content_type=content_types.APPLICATION_JSON,
@@ -300,7 +301,7 @@ def backup_in_case_of_error(bucket: str, document_folder: str):
     backup_folder = f"{document_folder}.bak"
     folder_exists = False
     backup_created = False
-    
+
     try:
         # Check if the folder exists by listing objects with the prefix
         response = s3_client.list_objects_v2(
@@ -429,4 +430,3 @@ def authentication_middleware(app: APIGatewayHttpResolver, next_middleware: Next
 
 # Register global middleware
 app.use(middlewares=[authentication_middleware])
-

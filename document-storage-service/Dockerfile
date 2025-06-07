@@ -4,7 +4,7 @@ FROM public.ecr.aws/lambda/python:3.13
 # Copy requirements and install dependencies
 COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
 RUN pip install uv && \
-    uv pip install --system --no-cache-dir -e .
+    uv pip install --system --no-cache-dir .
 
 # Copy application code
 COPY src/* ${LAMBDA_TASK_ROOT}/

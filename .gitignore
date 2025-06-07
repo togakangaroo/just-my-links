@@ -5,3 +5,13 @@ indexing-service/__pycache__/
 indexing-service/*.pyc
 indexing-service/.pytest_cache/
 indexing-service/.coverage
+index-documents-service/.venv/
+index-documents-service/__pycache__/
+index-documents-service/*.pyc
+index-documents-service/.pytest_cache/
+index-documents-service/.coverage
+document-storage-service/.venv/
+document-storage-service/__pycache__/
+document-storage-service/*.pyc
+document-storage-service/.pytest_cache/
+document-storage-service/.coverage

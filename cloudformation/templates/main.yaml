@@ -38,11 +38,11 @@ Resources:
   # SECRETS RESOURCES
   # ============================================================================
 
-  # Bearer Token Secret
-  BearerTokenSecret:
+  # Auth Token Secret
+  AuthTokenSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub "${Environment}-just-my-links-bearer-token"
+      Name: !Sub "just-my-links--auth-token--${Environment}"
       Description: Bearer token for Just My Links API authentication
       SecretString: !Ref BearerToken
 
@@ -50,11 +50,55 @@ Resources:
   # STORAGE RESOURCES
   # ============================================================================
 
-  # ECR Repository for Lambda Container
-  EcrRepository:
+  # ECR Repository for Store Document Lambda Container
+  StoreDocumentEcrRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub "${Environment}-just-my-links-lambda"
+      RepositoryName: !Sub "just-my-links-ecr-store-document-${Environment}"
+      ImageTagMutability: MUTABLE
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaECRImageRetrievalPolicy
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              StringLike:
+                aws:sourceArn: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          - Sid: AllowAdminAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - ecr:*
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 2 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 2
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  # ECR Repository for Index Documents Lambda Container
+  IndexDocumentsEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "just-my-links-ecr-index-documents-${Environment}"
       ImageTagMutability: MUTABLE
       RepositoryPolicyText:
         Version: '2012-10-17'
@@ -98,7 +142,7 @@ Resources:
   ApplicationBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "just-my-links-${Environment}-${AWS::AccountId}"
+      BucketName: !Sub "just-my-links--application-bucket--${Environment}"
       VersioningConfiguration:
         Status: Enabled
       LifecycleConfiguration:
@@ -126,7 +170,7 @@ Resources:
   AlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub "${Environment}-just-my-links-alerts"
+      TopicName: !Sub "just-my-links--alerts--${Environment}"
       DisplayName: Just My Links Alerts
 
   # SNS Subscription for Email Alerts
@@ -141,7 +185,7 @@ Resources:
   S3BucketSizeAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "${Environment}-just-my-links-s3-bucket-size"
+      AlarmName: !Sub "just-my-links--s3-bucket-size--${Environment}"
       AlarmDescription: Alert when S3 application bucket exceeds size threshold
       MetricName: BucketSizeBytes
       Namespace: AWS/S3
@@ -162,17 +206,81 @@ Resources:
   EventBus:
     Type: AWS::Events::EventBus
     Properties:
-      Name: !Sub "${Environment}-just-my-links"
+      Name: !Sub "just-my-links--events--${Environment}"
+
+  # ============================================================================
+  # QUEUING RESOURCES
+  # ============================================================================
+
+  # Dead Letter Queue for Index Documents
+  IndexDocumentsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "just-my-links--index-documents-dlq--${Environment}"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # SQS Queue for Index Documents Trigger
+  IndexDocumentsTriggerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "just-my-links--index-documents-trigger--${Environment}"
+      VisibilityTimeout: 360  # 6 minutes (longer than Lambda timeout)
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IndexDocumentsDLQ.Arn
+        maxReceiveCount: 3
+
+  # EventBridge Rule to forward Document Stored events to SQS
+  DocumentStoredRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "just-my-links--document-stored-rule--${Environment}"
+      Description: "Forward Document stored events to SQS queue"
+      EventBusName: !Ref EventBus
+      EventPattern:
+        source: ["just-my-links.document-storage"]
+        detail-type: ["Document stored"]
+      Targets:
+        - Arn: !GetAtt IndexDocumentsTriggerQueue.Arn
+          Id: "IndexDocumentsTriggerTarget"
+
+  # SQS Event Source Mapping for Index Documents Lambda
+  IndexDocumentsEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: IsNotFirstRunCondition
+    Properties:
+      EventSourceArn: !GetAtt IndexDocumentsTriggerQueue.Arn
+      FunctionName: !Ref IndexDocumentsFunction
+      BatchSize: 1
+      MaximumBatchingWindowInSeconds: 0
+
+  # CloudWatch Alarm for DLQ Messages
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "just-my-links--index-documents-dlq-alarm--${Environment}"
+      AlarmDescription: Alert when messages appear in the dead letter queue
+      MetricName: ApproximateNumberOfVisibleMessages
+      Namespace: AWS/SQS
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IndexDocumentsDLQ.QueueName
+      AlarmActions:
+        - !Ref AlertsTopic
 
   # ============================================================================
   # COMPUTE RESOURCES
   # ============================================================================
 
-  # Lambda Execution Role
+  # Store Document Lambda Execution Role
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "${Environment}-just-my-links-lambda-role"
+      RoleName: !Sub "just-my-links--store-document-role--${Environment}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -190,7 +298,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Ref BearerTokenSecret
+                Resource: !Ref AuthTokenSecret
         - PolicyName: EventBridgeAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -213,37 +321,91 @@ Resources:
                   - !Sub "${ApplicationBucket.Arn}/*"
                   - !GetAtt ApplicationBucket.Arn
 
-  # Lambda Function
-  IndexDocumentFunction:
+  # Index Documents Lambda Execution Role
+  IndexDocumentsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "just-my-links--index-documents-role--${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+      Policies:
+        - PolicyName: EventBridgeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: !GetAtt EventBus.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource: 
+                  - !Sub "${ApplicationBucket.Arn}/*"
+                  - !GetAtt ApplicationBucket.Arn
+
+  # Document Storage Lambda Function
+  StoreDocumentFunction:
     Type: AWS::Lambda::Function
     Condition: IsNotFirstRunCondition
     Properties:
-      FunctionName: !Sub "${Environment}-just-my-links-index-document"
-      Description: "Just My Links - index submitted documents"
+      FunctionName: !Sub "just-my-links--store-document--${Environment}"
+      Description: "Just My Links - store submitted documents"
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:latest"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${StoreDocumentEcrRepository}:latest"
       PackageType: Image
       Timeout: 300
       MemorySize: 1024
       ReservedConcurrentExecutions: 1  # Single concurrent execution
       Environment:
         Variables:
-          BEARER_TOKEN_SECRET_ARN: !Ref BearerTokenSecret
-          EVENT_BUS_NAME: !Sub "${Environment}-just-my-links"
+          BEARER_TOKEN_SECRET_ARN: !Ref AuthTokenSecret
+          EVENT_BUS_NAME: !Sub "just-my-links--events--${Environment}"
           APPLICATION_BUCKET: !Ref ApplicationBucket
           ENVIRONMENT_NAME: !Ref Environment
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
+
+  # Document Indexing Lambda Function
+  IndexDocumentsFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsNotFirstRunCondition
+    Properties:
+      FunctionName: !Sub "just-my-links--index-documents--${Environment}"
+      Description: "Just My Links - index documents into ChromaDB"
+      Role: !GetAtt IndexDocumentsLambdaRole.Arn
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}:latest"
+      PackageType: Image
+      Timeout: 300
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 1  # Single concurrent execution
+      Environment:
+        Variables:
+          APPLICATION_BUCKET: !Ref ApplicationBucket
+          ENVIRONMENT_NAME: !Ref Environment
 
   # API Gateway HTTP API
-  HttpApi:
+  DocumentStorageHttpApi:
     Type: AWS::ApiGatewayV2::Api
     Condition: IsNotFirstRunCondition
     Properties:
-      Name: !Sub "${Environment}-just-my-links-api"
-      Description: Just My Links HTTP API
+      Name: !Sub "just-my-links--store-documents-api--${Environment}"
+      Description: Just My Links store documents HTTP API
       ProtocolType: HTTP
       CorsConfiguration:
         AllowCredentials: false
@@ -256,68 +418,102 @@ Resources:
         MaxAge: 86400
 
   # HTTP API Integration
-  HttpApiIntegration:
+  DocumentStorageHttpApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Condition: IsNotFirstRunCondition
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !Ref DocumentStorageHttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IndexDocumentFunction.Arn}/invocations"
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StoreDocumentFunction.Arn}/invocations"
       PayloadFormatVersion: "2.0"
 
-  # HTTP API Route
-  HttpApiRoute:
+  # HTTP API Route for Document Storage
+  DocumentStorageHttpApiRoute:
     Type: AWS::ApiGatewayV2::Route
     Condition: IsNotFirstRunCondition
     Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: "POST /index-document"
-      Target: !Sub "integrations/${HttpApiIntegration}"
+      ApiId: !Ref DocumentStorageHttpApi
+      RouteKey: "PUT /document/{document_url+}"
+      Target: !Sub "integrations/${DocumentStorageHttpApiIntegration}"
 
   # HTTP API Stage
-  HttpApiStage:
+  DocumentStorageHttpApiStage:
     Type: AWS::ApiGatewayV2::Stage
     Condition: IsNotFirstRunCondition
     Properties:
-      ApiId: !Ref HttpApi
+      ApiId: !Ref DocumentStorageHttpApi
       StageName: !Ref Environment
       AutoDeploy: true
 
   # Lambda Permission for HTTP API
-  HttpApiLambdaPermission:
+  DocumentStorageHttpApiLambdaPermission:
     Type: AWS::Lambda::Permission
     Condition: IsNotFirstRunCondition
     Properties:
-      FunctionName: !Ref IndexDocumentFunction
+      FunctionName: !Ref StoreDocumentFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DocumentStorageHttpApi}/*/*"
+
+  # SQS Queue Policy to allow EventBridge to send messages
+  IndexDocumentsTriggerQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref IndexDocumentsTriggerQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt IndexDocumentsTriggerQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt DocumentStoredRule.Arn
 
 Outputs:
-  HttpApiUrl:
+  DocumentStorageHttpApiUrl:
     Condition: IsNotFirstRunCondition
     Description: HTTP API endpoint URL
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/index-document"
+    Value: !Sub "https://${DocumentStorageHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
     Export:
-      Name: !Sub "${Environment}-just-my-links-api-url"
+      Name: !Sub "just-my-links--store-document--${Environment}"
 
   ApplicationBucketName:
-    Description: S3 Bucket name for application data (ChromaDB and logs)
+    Description: S3 Bucket name for application data (ChromaDB, stored documents, logs)
     Value: !Ref ApplicationBucket
     Export:
-      Name: !Sub "${Environment}-just-my-links-application-bucket"
+      Name: !Sub "just-my-links--application-bucket--${Environment}"
 
-  LambdaFunctionArn:
+  StoreDocumentFunctionArn:
     Condition: IsNotFirstRunCondition
-    Description: Lambda function ARN
-    Value: !GetAtt IndexDocumentFunction.Arn
+    Description: Store Document Lambda function ARN
+    Value: !GetAtt StoreDocumentFunction.Arn
 
-  EcrRepositoryUri:
-    Description: ECR Repository URI
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+  IndexDocumentsFunctionArn:
+    Condition: IsNotFirstRunCondition
+    Description: Index Documents Lambda function ARN
+    Value: !GetAtt IndexDocumentsFunction.Arn
 
-  BearerTokenSecretName:
-    Description: Name of the bearer token secret in Secrets Manager
-    Value: !Ref BearerTokenSecret
+  StoreDocumentEcrRepositoryUri:
+    Description: Store Document ECR Repository URI
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${StoreDocumentEcrRepository}"
+
+  IndexDocumentsEcrRepositoryUri:
+    Description: Index Documents ECR Repository URI
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}"
+
+  AuthTokenSecretName:
+    Description: Name of the auth token secret in Secrets Manager
+    Value: !Ref AuthTokenSecret
     Export:
-      Name: !Sub "${Environment}-just-my-links-bearer-token-secret-name"
+      Name: !Sub "just-my-links--auth-token-secret-name--${Environment}"
+
+  EventBusName:
+    Description: EventBridge event bus name
+    Value: !Ref EventBus
+    Export:
+      Name: !Sub "just-my-links--event-bus-name--${Environment}"

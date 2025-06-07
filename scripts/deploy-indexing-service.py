@@ -1,25 +1,25 @@
 #!/usr/bin/env -S uv run python
 """
-Deploy script for the document storage service Lambda function.
+Deploy script for the indexing service Lambda function.
 
-This script builds the document-storage-service Docker container and deploys it to AWS ECR,
+This script builds the index-documents-service Docker container and deploys it to AWS ECR,
 then updates the Lambda function to use the new container image. The script:
 
 1. Authenticates Docker/Podman to AWS ECR
-2. Builds the Docker image from the document-storage-service directory
+2. Builds the Docker image from the index-documents-service directory
 3. Tags and pushes the image to ECR
 4. Updates the Lambda function code to use the new image (if the function exists)
 
-The script automatically locates the document-storage-service directory relative to this
+The script automatically locates the index-documents-service directory relative to this
 script's location and builds the container from there.
 
 Usage:
-    ./deploy-document-storage-service.py [environment] [options]
+    ./deploy-index-documents-service.py [environment] [options]
 
 Examples:
-    ./deploy-document-storage-service.py dev
-    ./deploy-document-storage-service.py prod --region us-west-2
-    ./deploy-document-storage-service.py dev --verbose
+    ./deploy-index-documents-service.py dev
+    ./deploy-index-documents-service.py prod --region us-west-2
+    ./deploy-index-documents-service.py dev --verbose
 """
 
 import argparse
@@ -137,13 +137,13 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
     print("Building Docker image...")
 
     # Build the image
-    document_storage_service_path = Path(__file__).parent.parent / "document-storage-service"
-    run_command(['docker', 'build', '-t', 'document-storage-service', str(document_storage_service_path)], verbose=verbose)
+    indexing_service_path = Path(__file__).parent.parent / "index-documents-service"
+    run_command(['docker', 'build', '-t', 'index-documents-service', str(indexing_service_path)], verbose=verbose)
 
     # Tag for ECR
     print("Tagging image for ECR...")
     full_image_uri = f"{ecr_repository_uri}:{image_tag}"
-    run_command(['docker', 'tag', 'document-storage-service:latest', full_image_uri], verbose=verbose)
+    run_command(['docker', 'tag', 'index-documents-service:latest', full_image_uri], verbose=verbose)
 
     # Push to ECR with retry logic and re-authentication for Podman
     print("Pushing image to ECR...")
@@ -204,10 +204,10 @@ def update_lambda_function(lambda_function_name, image_uri, aws_region):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build and deploy the document storage service Docker container to AWS Lambda",
+        description="Build and deploy the indexing service Docker container to AWS Lambda",
         epilog="""
-This script builds the document-storage-service Docker container and deploys it to AWS.
-It automatically finds the document-storage-service directory relative to this script's
+This script builds the index-documents-service Docker container and deploys it to AWS.
+It automatically finds the index-documents-service directory relative to this script's
 location and handles the complete deployment pipeline from build to Lambda update.
     """,
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -253,8 +253,8 @@ location and handles the complete deployment pipeline from build to Lambda updat
         sys.exit(1)
 
     # Construct resource names
-    ecr_repository_uri = f"{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com/just-my-links-ecr-store-document-{environment}"
-    lambda_function_name = f"just-my-links-store-document-{environment}"
+    ecr_repository_uri = f"{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com/just-my-links-ecr-index-documents-{environment}"
+    lambda_function_name = f"just-my-links-index-documents-{environment}"
 
     print(f"Building and deploying Lambda container for environment: {environment}")
 

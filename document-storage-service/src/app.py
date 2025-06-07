@@ -26,6 +26,7 @@ app = APIGatewayHttpResolver()
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
 s3_client = boto3.client('s3')
+eventbridge_client = boto3.client('events')
 
 
 class MultipartParsingError(Exception):
@@ -36,14 +37,14 @@ class MultipartParsingError(Exception):
         super().__init__(message)
 
 
-def _get_multipart_request_body(event) -> bytes:
+def _get_multipart_request_body(event) -> Dict[str, bytes]:
     """Extract and parse multipart request body from API Gateway event
     
     Args:
         event: API Gateway event object
         
     Returns:
-        bytes: The document content from the 'document' part
+        Dict[str, bytes]: Dictionary mapping part names to their content
         
     Raises:
         MultipartParsingError: If parsing fails or document part is missing
@@ -82,22 +83,26 @@ def _get_multipart_request_body(event) -> bytes:
         parser = MultipartParser(boundary.encode())
         parts = parser.parse(io.BytesIO(request_body))
         
-        # Find the document part
-        document_content = None
-        for part in parts:
-            if part.name == 'document':
-                document_content = part.raw
-                break
+        # Extract all parts
+        parsed_parts = {}
+        document_found = False
         
-        if document_content is None:
+        for part in parts:
+            if part.name:
+                parsed_parts[part.name] = part.raw
+                if part.name == 'document':
+                    document_found = True
+        
+        if not document_found:
             logger.error("No 'document' part found in multipart form-data")
             raise MultipartParsingError("Missing required 'document' part")
             
-        logger.info("Document part found", extra={
-            "content_length": len(document_content)
+        logger.info("Multipart parts parsed", extra={
+            "part_count": len(parsed_parts),
+            "part_names": list(parsed_parts.keys())
         })
         
-        return document_content
+        return parsed_parts
         
     except MultipartParsingError:
         raise
@@ -115,7 +120,7 @@ def store_document(document_url: str):
     logger.debug("Generated S3 path for document", extra={"document_url": document_url, "document_s3_path": document_s3_path})
 
     try:
-        document_content = _get_multipart_request_body(app.current_event)
+        multipart_parts = _get_multipart_request_body(app.current_event)
     except MultipartParsingError as e:
         return Response(
             status_code=e.status_code,
@@ -126,21 +131,101 @@ def store_document(document_url: str):
     application_bucket, documents_folder = get_documents_folder()
     document_folder = f"{documents_folder}/{document_s3_path}"
 
+    # Determine entrypoint file
+    entrypoint = None
+    if 'document.html' in multipart_parts:
+        entrypoint = 'document.html'
+    elif 'document.txt' in multipart_parts:
+        entrypoint = 'document.txt'
+    elif 'document' in multipart_parts:
+        # If just 'document' part, determine type and save as appropriate file
+        document_content = multipart_parts['document']
+        # Simple heuristic: if it contains HTML tags, treat as HTML
+        if b'<html' in document_content.lower() or b'<body' in document_content.lower():
+            entrypoint = 'document.html'
+            multipart_parts['document.html'] = document_content
+            del multipart_parts['document']
+        else:
+            entrypoint = 'document.txt'
+            multipart_parts['document.txt'] = document_content
+            del multipart_parts['document']
+    else:
+        return Response(
+            status_code=400,
+            content_type=content_types.APPLICATION_JSON,
+            body={"error": "No document.html, document.txt, or document part found"}
+        )
+
     with backup_in_case_of_error(application_bucket, document_folder):
-        # Create new folder structure (S3 doesn't have folders, so we create a placeholder object)
-        placeholder_key = f"{document_folder}/.placeholder"
+        # Store all multipart files in S3
+        for filename, content in multipart_parts.items():
+            file_key = f"{document_folder}/{filename}"
+            
+            # Determine content type
+            content_type = 'text/plain'
+            if filename.endswith('.html'):
+                content_type = 'text/html'
+            elif filename.endswith('.txt'):
+                content_type = 'text/plain'
+            
+            s3_client.put_object(
+                Bucket=application_bucket,
+                Key=file_key,
+                Body=content,
+                ContentType=content_type
+            )
+            logger.debug("Stored file in S3", extra={"key": file_key, "size": len(content)})
+
+        # Create metadata.json
+        metadata = {
+            "documentUrl": document_url,
+            "entrypoint": entrypoint,
+            "files": list(multipart_parts.keys()),
+            "timestamp": json.dumps({"$date": {"$numberLong": str(int(__import__('time').time() * 1000))}})
+        }
+        
+        metadata_key = f"{document_folder}/.metadata.json"
         s3_client.put_object(
             Bucket=application_bucket,
-            Key=placeholder_key,
-            Body=b'',
-            ContentType='text/plain'
+            Key=metadata_key,
+            Body=json.dumps(metadata, indent=2),
+            ContentType='application/json'
         )
-        logger.info("Document folder recreated", extra={"folder": document_folder})
+        logger.info("Stored metadata", extra={"metadata_key": metadata_key, "entrypoint": entrypoint})
 
+        # Publish event to EventBridge
+        try:
+            event_bus_name = get_event_bus_name()
+            event_detail = {
+                "folderPath": document_folder,
+                "documentUrl": document_url
+            }
+            
+            eventbridge_client.put_events(
+                Entries=[
+                    {
+                        'Source': 'just-my-links.document-storage',
+                        'DetailType': 'Document stored',
+                        'Detail': json.dumps(event_detail),
+                        'EventBusName': event_bus_name
+                    }
+                ]
+            )
+            logger.info("Published event to EventBridge", extra={"event_detail": event_detail})
+            
+        except Exception as e:
+            logger.error("Failed to publish event to EventBridge", extra={"error": str(e)})
+            # Don't fail the request if event publishing fails
+            
     return Response(
-        status_code=501,
+        status_code=200,
         content_type=content_types.APPLICATION_JSON,
-        body={"message": "Not yet implemented - will download ChromaDB from S3, operate locally, then upload back"}
+        body={
+            "message": "Document stored successfully",
+            "folderPath": document_folder,
+            "entrypoint": entrypoint,
+            "files": list(multipart_parts.keys())
+        }
     )
 
 
@@ -197,8 +282,16 @@ def get_documents_folder() -> tuple[str, str]:
     """Get application bucket name and documents folder with caching"""
     application_bucket = os.getenv("APPLICATION_BUCKET")
     assert application_bucket, "APPLICATION_BUCKET environment variable not set"
-    documents_folder = "saved_documents"
+    documents_folder = "document-storage"
     return application_bucket, documents_folder
+
+
+@cache
+def get_event_bus_name() -> str:
+    """Get EventBridge event bus name with caching"""
+    event_bus_name = os.getenv("EVENT_BUS_NAME")
+    assert event_bus_name, "EVENT_BUS_NAME environment variable not set"
+    return event_bus_name
 
 
 @contextmanager

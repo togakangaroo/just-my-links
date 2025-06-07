@@ -29,93 +29,20 @@ secrets_client = boto3.client('secretsmanager')
 s3_client = boto3.client('s3')
 eventbridge_client = boto3.client('events')
 
-
-class MultipartParsingError(Exception):
-    """Custom exception for multipart parsing errors with status codes"""
-    def __init__(self, message: str, status_code: int = 400):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(message)
-
-
-def _get_multipart_request_body(event) -> Dict[str, bytes]:
-    """Extract and parse multipart request body from API Gateway event
-
-    Args:
-        event: API Gateway event object
-
-    Returns:
-        Dict[str, bytes]: Dictionary mapping part names to their content
-
-    Raises:
-        MultipartParsingError: If parsing fails or document part is missing
-    """
-    request_body = event.body
-    headers = getattr(event, 'headers', {})
-    content_type = headers.get('content-type', '')
-
-    if not request_body or 'multipart/form-data' not in content_type:
-        logger.error("Request is not multipart/form-data", extra={"content_type": content_type})
-        raise MultipartParsingError("Request must be multipart/form-data")
-
-    # Decode base64 if needed
-    is_base64_encoded = event.get('isBase64Encoded', False)
-    if is_base64_encoded:
-        try:
-            request_body = base64.b64decode(request_body)
-        except Exception as e:
-            logger.error("Failed to decode base64 request body", extra={"error": str(e)})
-            raise MultipartParsingError("Failed to decode base64 request body")
-    elif isinstance(request_body, str):
-        request_body = request_body.encode('utf-8')
-
-    # Parse content type to get boundary
-    try:
-        content_type_header, options = parse_options_header(content_type)
-        boundary = options.get('boundary')
-        if not boundary:
-            raise MultipartParsingError("No boundary found in Content-Type header")
-    except Exception as e:
-        logger.error("Failed to parse Content-Type header", extra={"error": str(e)})
-        raise MultipartParsingError("Invalid Content-Type header")
-
-    # Parse multipart data
-    try:
-        parser = python_multipart.MultipartParser(boundary.encode())
-        parts = parser.parse(io.BytesIO(request_body))
-
-        # Extract all parts
-        parsed_parts = {}
-        document_found = False
-
-        for part in parts:
-            if part.name:
-                parsed_parts[part.name] = part.raw
-                if part.name == 'document':
-                    document_found = True
-
-        if not document_found:
-            logger.error("No 'document' part found in multipart form-data")
-            raise MultipartParsingError("Missing required 'document' part")
-
-        logger.info("Multipart parts parsed", extra={
-            "part_count": len(parsed_parts),
-            "part_names": list(parsed_parts.keys())
-        })
-
-        return parsed_parts
-
-    except MultipartParsingError:
-        raise
-    except Exception as e:
-        logger.error("Failed to parse multipart form-data", extra={"error": str(e)})
-        raise MultipartParsingError("Failed to parse multipart form-data")
-
-
-@app.put("/document/<document_url>")
+@app.put("/document")
 @tracer.capture_method
-def store_document(document_url: str):
+def store_document():
     """Handle document storage requests"""
+    # Get document URL from query parameter
+    query_params = app.current_event.query_string_parameters or {}
+    document_url = query_params.get('url')
+    logger.debug("Query parameters", extra={"query_params": query_params})
+    if not document_url:
+        return Response(
+            status_code=400,
+            content_type=content_types.APPLICATION_JSON,
+            body={"error": "Missing required 'url' query parameter"}
+        )
     # Convert document_url to a safe S3 key using hash
     document_s3_path = hashlib.sha256(document_url.encode('utf-8')).hexdigest()
     logger.debug("Generated S3 path for document", extra={"document_url": document_url, "document_s3_path": document_s3_path})
@@ -230,34 +157,87 @@ def store_document(document_url: str):
     )
 
 
+class MultipartParsingError(Exception):
+    """Custom exception for multipart parsing errors with status codes"""
+    def __init__(self, message: str, status_code: int = 400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(message)
 
-@logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
-@tracer.capture_lambda_handler
-@metrics.log_metrics
-def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
-    """Lambda handler function"""
+
+def _get_multipart_request_body(event) -> Dict[str, bytes]:
+    """Extract and parse multipart request body from API Gateway event
+
+    Args:
+        event: API Gateway event object
+
+    Returns:
+        Dict[str, bytes]: Dictionary mapping part names to their content
+
+    Raises:
+        MultipartParsingError: If parsing fails or document part is missing
+    """
+    request_body = event.body
+    headers = getattr(event, 'headers', {})
+    content_type = headers.get('content-type', '')
+
+    if not request_body or 'multipart/form-data' not in content_type:
+        logger.error("Request is not multipart/form-data", extra={"content_type": content_type})
+        raise MultipartParsingError("Request must be multipart/form-data")
+
+    # Decode base64 if needed
+    is_base64_encoded = event.get('isBase64Encoded', False)
+    if is_base64_encoded:
+        try:
+            request_body = base64.b64decode(request_body)
+        except Exception as e:
+            logger.error("Failed to decode base64 request body", extra={"error": str(e)})
+            raise MultipartParsingError("Failed to decode base64 request body")
+    elif isinstance(request_body, str):
+        request_body = request_body.encode('utf-8')
+
+    # Parse content type to get boundary
     try:
-        logger.info("Lambda handler invoked", extra={"event_type": event.get("httpMethod", "unknown")})
-        return app.resolve(event, context)
+        content_type_header, options = parse_options_header(content_type)
+        boundary = options.get('boundary')
+        if not boundary:
+            raise MultipartParsingError("No boundary found in Content-Type header")
     except Exception as e:
-        logger.exception("Unhandled exception in lambda_handler", extra={
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "event": event
-        })
-        metrics.add_metric(name="UnhandledExceptions", unit=MetricUnit.Count, value=1)
+        logger.error("Failed to parse Content-Type header", extra={"error": str(e)})
+        raise MultipartParsingError("Invalid Content-Type header")
 
-        # Return a proper API Gateway response
-        return {
-            "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
-            "body": json.dumps({
-                "error": "Internal server error",
-                "message": "An unexpected error occurred"
-            })
-        }
+    # Parse multipart data
+    try:
+        parser = python_multipart.MultipartParser(boundary.encode())
+        parts = parser.parse(io.BytesIO(request_body))
+
+        # Extract all parts
+        parsed_parts = {}
+        document_found = False
+
+        for part in parts:
+            if part.name:
+                parsed_parts[part.name] = part.raw
+                if part.name == 'document':
+                    document_found = True
+
+        if not document_found:
+            logger.error("No 'document' part found in multipart form-data")
+            raise MultipartParsingError("Missing required 'document' part")
+
+        logger.info("Multipart parts parsed", extra={
+            "part_count": len(parsed_parts),
+            "part_names": list(parsed_parts.keys())
+        })
+
+        return parsed_parts
+
+    except MultipartParsingError:
+        raise
+    except Exception as e:
+        logger.error("Failed to parse multipart form-data", extra={"error": str(e)})
+        raise MultipartParsingError("Failed to parse multipart form-data")
+
 
 @cache
 def get_bearer_token() -> str:
@@ -312,7 +292,7 @@ def backup_in_case_of_error(bucket: str, document_folder: str):
         folder_exists = response.get('KeyCount', 0) > 0
 
         if folder_exists:
-            logger.info("Document folder exists, creating backup", extra={"folder": document_folder})
+            logger.debug("Document folder exists, creating backup", extra={"folder": document_folder})
 
             # Create backup by copying all objects
             paginator = s3_client.get_paginator('list_objects_v2')
@@ -330,9 +310,10 @@ def backup_in_case_of_error(bucket: str, document_folder: str):
             backup_created = True
             logger.debug("Backup created successfully", extra={"backup_folder": backup_folder})
 
+        # TODO - refactor this and the similar folder dletion further down into a helper function
         # Delete existing folder contents
         if folder_exists:
-            logger.info("Deleting existing document folder", extra={"folder": document_folder})
+            logger.debug("Deleting existing document folder", extra={"folder": document_folder})
             paginator = s3_client.get_paginator('list_objects_v2')
             for page in paginator.paginate(Bucket=bucket, Prefix=f"{document_folder}/"):
                 objects_to_delete = [{'Key': obj['Key']} for obj in page.get('Contents', [])]
@@ -350,7 +331,7 @@ def backup_in_case_of_error(bucket: str, document_folder: str):
 
         # Restore from backup if it was created
         if backup_created:
-            logger.info("Restoring from backup due to error")
+            logger.debug("Restoring from backup due to error")
             try:
                 # Delete any partial changes
                 paginator = s3_client.get_paginator('list_objects_v2')
@@ -430,3 +411,40 @@ def authentication_middleware(app: APIGatewayHttpResolver, next_middleware: Next
 
 # Register global middleware
 app.use(middlewares=[authentication_middleware])
+
+@logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_HTTP)
+@tracer.capture_lambda_handler
+@metrics.log_metrics
+def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
+    """Lambda handler function"""
+    try:
+        logger.debug("Lambda handler invoked", extra={
+            "event_type": event.get("httpMethod", "unknown"),
+            "path": event.get("path", "unknown"),
+            "resource": event.get("resource", "unknown"),
+            "request_context": event.get("requestContext", {})
+        })
+        logger.debug("Full event received", extra={"event": event})
+
+        result = app.resolve(event, context)
+        logger.info("Request resolved", extra={"status_code": result.get("statusCode")})
+        return result
+    except Exception as e:
+        logger.exception("Unhandled exception in lambda_handler", extra={
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "event": event
+        })
+        metrics.add_metric(name="UnhandledExceptions", unit=MetricUnit.Count, value=1)
+
+        # Return a proper API Gateway response
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": json.dumps({
+                "error": "Internal server error",
+                "message": "An unexpected error occurred"
+            })
+        }

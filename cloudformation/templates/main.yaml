@@ -427,13 +427,13 @@ Resources:
       IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StoreDocumentFunction.Arn}/invocations"
       PayloadFormatVersion: "2.0"
 
-  # HTTP API Route for Document Storage
+  # HTTP API Route for Document Storage - Proxy all requests to Lambda
   DocumentStorageHttpApiRoute:
     Type: AWS::ApiGatewayV2::Route
     Condition: IsNotFirstRunCondition
     Properties:
       ApiId: !Ref DocumentStorageHttpApi
-      RouteKey: "PUT /document/{document_url+}"
+      RouteKey: "$default"
       Target: !Sub "integrations/${DocumentStorageHttpApiIntegration}"
 
   # HTTP API Stage

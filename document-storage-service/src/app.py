@@ -1,22 +1,26 @@
+import base64
+import hashlib
+import io
 import json
 import os
 import secrets
-import hashlib
-from functools import cache
-from typing import Dict, Any
-import base64
 from contextlib import contextmanager
-import io
+from functools import cache
+from typing import Any, Dict, cast
 
 import boto3
-from python_multipart.multipart import parse_options_header
-import python_multipart
-from aws_lambda_powertools import Logger, Tracer, Metrics
+from python_multipart import MultipartParser
+from aws_lambda_powertools import Logger, Metrics, Tracer
+from aws_lambda_powertools.event_handler import (
+    APIGatewayHttpResolver,
+    Response,
+    content_types,
+)
+from aws_lambda_powertools.event_handler.middlewares import NextMiddleware
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.metrics import MetricUnit
-from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
-from aws_lambda_powertools.event_handler.middlewares import NextMiddleware
 from aws_lambda_powertools.utilities.typing import LambdaContext
+from python_multipart.multipart import parse_options_header
 
 # Initialize powertools
 logger = Logger(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -36,19 +40,21 @@ def store_document():
     # Get document URL from query parameter
     query_params = app.current_event.query_string_parameters or {}
     document_url = query_params.get('url')
-    logger.debug("Query parameters", extra={"query_params": query_params})
+
     if not document_url:
         return Response(
             status_code=400,
             content_type=content_types.APPLICATION_JSON,
             body={"error": "Missing required 'url' query parameter"}
         )
+
+    # TODO - rather than a comment, extract this to a well named method
     # Convert document_url to a safe S3 key using hash
     document_s3_path = hashlib.sha256(document_url.encode('utf-8')).hexdigest()
     logger.debug("Generated S3 path for document", extra={"document_url": document_url, "document_s3_path": document_s3_path})
 
     try:
-        multipart_parts = _get_multipart_request_body(app.current_event)
+        upload_results = _stream_multipart_to_s3(app.current_event, document_s3_path)
     except MultipartParsingError as e:
         return Response(
             status_code=e.status_code,
@@ -59,56 +65,27 @@ def store_document():
     application_bucket, documents_folder = get_documents_folder()
     document_folder = f"{documents_folder}/{document_s3_path}"
 
-    # Determine entrypoint file
+    # Determine entrypoint file from uploaded files
     entrypoint = None
-    if 'document.html' in multipart_parts:
+    uploaded_files = list(upload_results.keys())
+
+    if 'document.html' in uploaded_files:
         entrypoint = 'document.html'
-    elif 'document.txt' in multipart_parts:
+    elif 'document.txt' in uploaded_files:
         entrypoint = 'document.txt'
-    elif 'document' in multipart_parts:
-        # If just 'document' part, determine type and save as appropriate file
-        document_content = multipart_parts['document']
-        # Simple heuristic: if it contains HTML tags, treat as HTML
-        if b'<html' in document_content.lower() or b'<body' in document_content.lower():
-            entrypoint = 'document.html'
-            multipart_parts['document.html'] = document_content
-            del multipart_parts['document']
-        else:
-            entrypoint = 'document.txt'
-            multipart_parts['document.txt'] = document_content
-            del multipart_parts['document']
     else:
         return Response(
             status_code=400,
             content_type=content_types.APPLICATION_JSON,
-            body={"error": "No document.html, document.txt, or document part found"}
+            body={"error": "No document.html or document.txt file was successfully uploaded"}
         )
 
     with backup_in_case_of_error(application_bucket, document_folder):
-        # Store all multipart files in S3
-        for filename, content in multipart_parts.items():
-            file_key = f"{document_folder}/{filename}"
-
-            # Determine content type
-            content_type = 'text/plain'
-            if filename.endswith('.html'):
-                content_type = 'text/html'
-            elif filename.endswith('.txt'):
-                content_type = 'text/plain'
-
-            s3_client.put_object(
-                Bucket=application_bucket,
-                Key=file_key,
-                Body=content,
-                ContentType=content_type
-            )
-            logger.debug("Stored file in S3", extra={"key": file_key, "size": len(content)})
-
         # Create metadata.json
         metadata = {
             "documentUrl": document_url,
             "entrypoint": entrypoint,
-            "files": list(multipart_parts.keys()),
+            "files": uploaded_files,
             "timestamp": json.dumps({"$date": {"$numberLong": str(int(__import__('time').time() * 1000))}})
         }
 
@@ -152,7 +129,7 @@ def store_document():
             "message": "Document stored successfully",
             "folderPath": document_folder,
             "entrypoint": entrypoint,
-            "files": list(multipart_parts.keys())
+            "files": uploaded_files
         }
     )
 
@@ -165,23 +142,180 @@ class MultipartParsingError(Exception):
         super().__init__(message)
 
 
-def _get_multipart_request_body(event) -> Dict[str, bytes]:
-    """Extract and parse multipart request body from API Gateway event
+class StreamingS3Upload:
+    """Handles streaming upload to S3 with size limits using multipart upload"""
+
+    def __init__(self, s3_client, bucket: str, key: str, content_type: str, max_size: int = 2 * 1024 * 1024):
+        self.s3_client = s3_client
+        self.bucket = bucket
+        self.key = key
+        self.content_type = content_type
+        self.max_size = max_size
+        self.current_size = 0
+        self.size_exceeded = False
+        self.completed = False
+        self.aborted = False
+
+        # S3 multipart upload state
+        self.upload_id = None
+        self.parts = []
+        self.part_number = 1
+        self.current_part_buffer = io.BytesIO()
+        self.min_part_size = 5 * 1024 * 1024  # 5MB minimum for multipart (except last part)
+
+        # For small files, we'll use regular put_object
+        self.use_multipart = False
+
+    def _start_multipart_upload(self):
+        """Initialize multipart upload"""
+        if self.upload_id is None:
+            response = self.s3_client.create_multipart_upload(
+                Bucket=self.bucket,
+                Key=self.key,
+                ContentType=self.content_type
+            )
+            self.upload_id = response['UploadId']
+            self.use_multipart = True
+
+    def _upload_part_if_ready(self, force=False):
+        """Upload a part if buffer is large enough or if forced"""
+        buffer_size = self.current_part_buffer.tell()
+
+        if not force and buffer_size < self.min_part_size:
+            return
+
+        if buffer_size == 0:
+            return
+
+        self._start_multipart_upload()
+
+        self.current_part_buffer.seek(0)
+        response = self.s3_client.upload_part(
+            Bucket=self.bucket,
+            Key=self.key,
+            PartNumber=self.part_number,
+            UploadId=self.upload_id,
+            Body=self.current_part_buffer.getvalue()
+        )
+
+        self.parts.append({
+            'ETag': response['ETag'],
+            'PartNumber': self.part_number
+        })
+
+        self.part_number += 1
+        self.current_part_buffer = io.BytesIO()
+
+    def write(self, data: bytes) -> None:
+        """Write data to the stream, checking size limits"""
+        if self.size_exceeded or self.aborted:
+            return
+
+        if self.current_size + len(data) > self.max_size:
+            self.size_exceeded = True
+            self._abort_upload()
+            return
+
+        self.current_size += len(data)
+        self.current_part_buffer.write(data)
+
+        # Upload part if buffer is large enough
+        self._upload_part_if_ready()
+
+    def _abort_upload(self):
+        """Abort the multipart upload"""
+        if self.upload_id and not self.aborted:
+            try:
+                self.s3_client.abort_multipart_upload(
+                    Bucket=self.bucket,
+                    Key=self.key,
+                    UploadId=self.upload_id
+                )
+            except Exception as e:
+                logger.warning("Failed to abort multipart upload", extra={"error": str(e)})
+            self.aborted = True
+
+    def complete(self) -> bool:
+        """Complete the upload. Returns True if successful, False if size exceeded"""
+        if self.size_exceeded:
+            return False
+
+        if self.current_size == 0:
+            return True
+
+        try:
+            if self.use_multipart:
+                # Upload final part
+                self._upload_part_if_ready(force=True)
+
+                # Complete multipart upload
+                self.s3_client.complete_multipart_upload(
+                    Bucket=self.bucket,
+                    Key=self.key,
+                    UploadId=self.upload_id,
+                    MultipartUpload={'Parts': self.parts}
+                )
+            else:
+                # For small files, use regular put_object
+                self.current_part_buffer.seek(0)
+                self.s3_client.put_object(
+                    Bucket=self.bucket,
+                    Key=self.key,
+                    Body=self.current_part_buffer.getvalue(),
+                    ContentType=self.content_type
+                )
+
+            self.completed = True
+            return True
+
+        except Exception as e:
+            logger.error("Failed to complete S3 upload", extra={"error": str(e)})
+            self._abort_upload()
+            return False
+
+    def get_size(self) -> int:
+        """Get the current size of uploaded data"""
+        return self.current_size
+
+
+def _is_acceptable_content_type(content_type: str) -> bool:
+    """Check if the content type is acceptable for document storage"""
+    acceptable_types = [
+        'text/plain',
+        'text/html',
+        'application/octet-stream',  # Allow this as it's often used as default
+        ''  # Allow empty content type
+    ]
+
+    # Extract main content type (ignore charset and other parameters)
+    main_type = content_type.split(';')[0].strip()
+    return main_type in acceptable_types
+
+
+
+def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
+    """Stream multipart request body directly to S3 with size limits
 
     Args:
         event: API Gateway event object
+        document_url: The document URL for logging
+        document_s3_path: The S3 path prefix for this document
 
     Returns:
-        Dict[str, bytes]: Dictionary mapping part names to their content
+        Dict[str, int]: Dictionary mapping successfully uploaded filenames to their sizes
 
     Raises:
-        MultipartParsingError: If parsing fails or document part is missing
+        MultipartParsingError: If parsing fails or document part is missing/too large
     """
-    request_body = event.body
-    headers = getattr(event, 'headers', {})
-    content_type = headers.get('content-type', '')
+    application_bucket, documents_folder = get_documents_folder()
+    document_folder = f"{documents_folder}/{document_s3_path}"
 
-    if not request_body or 'multipart/form-data' not in content_type:
+    MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
+    request_body = event.body
+    content_type_header = getattr(event, 'headers', {}).get('content-type', '')
+    content_type, options = parse_options_header(content_type_header)
+
+    if not request_body or not content_type.decode('latin-1').startswith('multipart/form-data'):
         logger.error("Request is not multipart/form-data", extra={"content_type": content_type})
         raise MultipartParsingError("Request must be multipart/form-data")
 
@@ -189,6 +323,7 @@ def _get_multipart_request_body(event) -> Dict[str, bytes]:
     is_base64_encoded = event.get('isBase64Encoded', False)
     if is_base64_encoded:
         try:
+            logger.debug("base64 decoding")
             request_body = base64.b64decode(request_body)
         except Exception as e:
             logger.error("Failed to decode base64 request body", extra={"error": str(e)})
@@ -196,47 +331,148 @@ def _get_multipart_request_body(event) -> Dict[str, bytes]:
     elif isinstance(request_body, str):
         request_body = request_body.encode('utf-8')
 
-    # Parse content type to get boundary
-    try:
-        content_type_header, options = parse_options_header(content_type)
-        boundary = options.get('boundary')
-        if not boundary:
-            raise MultipartParsingError("No boundary found in Content-Type header")
-    except Exception as e:
-        logger.error("Failed to parse Content-Type header", extra={"error": str(e)})
-        raise MultipartParsingError("Invalid Content-Type header")
+    boundary = options.get(b'boundary')
+    if not boundary:
+        raise MultipartParsingError("No boundary found in Content-Type header")
 
-    # Parse multipart data
-    try:
-        parser = python_multipart.MultipartParser(boundary.encode())
-        parts = parser.parse(io.BytesIO(request_body))
+    # Parse multipart data using callback-based approach with streaming to S3
+    uploaded_files = {}
+    current_part_name = None
+    current_upload = None
+    current_headers = {}
+    header_name_buffer = []
+    header_value_buffer = []
+    document_part_found = False
+    document_part_too_large = False
 
-        # Extract all parts
-        parsed_parts = {}
-        document_found = False
+    def on_part_begin():
+        nonlocal current_part_name, current_upload, current_headers
+        current_part_name = None
+        current_upload = None
+        current_headers = {}
 
-        for part in parts:
-            if part.name:
-                parsed_parts[part.name] = part.raw
-                if part.name == 'document':
-                    document_found = True
+    def on_part_data(data, start, end):
+        if current_upload:
+            current_upload.write(data[start:end])
 
-        if not document_found:
-            logger.error("No 'document' part found in multipart form-data")
-            raise MultipartParsingError("Missing required 'document' part")
+    def on_part_end():
+        nonlocal document_part_found, document_part_too_large
+        if not current_upload:
+            return
+        success = current_upload.complete()
+        if success:
+            uploaded_files[current_part_name] = current_upload.get_size()
+            logger.debug("Successfully uploaded file", extra={
+                "file_name": current_part_name,
+                "size": current_upload.get_size()
+            })
+        else:
+            logger.warning("File exceeded size limit", extra={
+                "file_name": current_part_name,
+                "max_size": MAX_FILE_SIZE
+            })
+            # Check if this was the document part
+            if current_part_name == 'document':
+                document_part_too_large = True
 
-        logger.info("Multipart parts parsed", extra={
-            "part_count": len(parsed_parts),
-            "part_names": list(parsed_parts.keys())
-        })
+    def on_header_field(data, start, end):
+        header_name_buffer.append(data[start:end])
 
-        return parsed_parts
+    def on_header_value(data, start, end):
+        header_value_buffer.append(data[start:end])
 
-    except MultipartParsingError:
-        raise
-    except Exception as e:
-        logger.error("Failed to parse multipart form-data", extra={"error": str(e)})
-        raise MultipartParsingError("Failed to parse multipart form-data")
+    def on_header_end():
+        header_name = b''.join(header_name_buffer).decode('utf-8').lower()
+        header_value = b''.join(header_value_buffer).decode('utf-8')
+        current_headers[header_name] = header_value
+
+        # Clear buffers for next header
+        header_name_buffer.clear()
+        header_value_buffer.clear()
+
+    def on_headers_finished():
+        nonlocal current_part_name, current_upload, document_part_found
+        # Parse Content-Disposition header to get field name
+        content_disp = current_headers.get('content-disposition', '')
+        if 'name=' in content_disp:
+            # Extract name from Content-Disposition header
+            import re
+            match = re.search(r'name=(?:"([^"]+)"|([^;\s]+))', content_disp)
+            if match:
+                current_part_name = match.group(1) or match.group(2)
+
+                # Track if we found the document part
+                if current_part_name == 'document':
+                    document_part_found = True
+
+                # Validate content type for document parts
+                if current_part_name == 'document':
+                    content_type = current_headers.get('content-type', '').lower()
+                    if content_type and not _is_acceptable_content_type(content_type):
+                        raise MultipartParsingError(
+                            f"Document part has unsupported content type: {content_type}. "
+                            "Only text/plain and text/html are supported."
+                        )
+
+                # Determine filename and content type for S3
+                if current_part_name == 'document':
+                    # Determine if HTML or text based on content type or simple heuristic
+                    content_type = current_headers.get('content-type', '').lower()
+                    if 'html' in content_type:
+                        filename = 'document.html'
+                        s3_content_type = 'text/html'
+                    else:
+                        filename = 'document.txt'
+                        s3_content_type = 'text/plain'
+                else:
+                    filename = current_part_name
+                    if filename.endswith('.html'):
+                        s3_content_type = 'text/html'
+                    else:
+                        s3_content_type = 'text/plain'
+
+                # Create streaming upload
+                file_key = f"{document_folder}/{filename}"
+                current_upload = StreamingS3Upload(
+                    s3_client=s3_client,
+                    bucket=application_bucket,
+                    key=file_key,
+                    content_type=s3_content_type,
+                    max_size=MAX_FILE_SIZE
+                )
+
+    # Set up callbacks
+    callbacks = {
+        'on_part_begin': on_part_begin,
+        'on_part_data': on_part_data,
+        'on_part_end': on_part_end,
+        'on_header_field': on_header_field,
+        'on_header_value': on_header_value,
+        'on_header_end': on_header_end,
+        'on_headers_finished': on_headers_finished,
+    }
+
+    # Create parser and feed it data
+    parser = MultipartParser(boundary, cast(Any, callbacks)) # Note the cast is the easiest way to bypass a complex typing mechanic. You can't just import the underlying type as it doesn't exist during runtime
+    parser.write(request_body)
+
+    # Check if document part was found and handle size errors
+    if not document_part_found:
+        logger.error("No 'document' part found in multipart form-data")
+        raise MultipartParsingError("Missing required 'document' part")
+
+    if document_part_too_large:
+        logger.error("Document part exceeded size limit", extra={"max_size": MAX_FILE_SIZE})
+        raise MultipartParsingError(
+            f"Document file is too large. Maximum allowed size is {MAX_FILE_SIZE // (1024*1024)}MB."
+        )
+
+    logger.debug("Multipart parts streamed to S3", extra={
+        "file_count": len(uploaded_files),
+        "file_names": list(uploaded_files.keys())
+    })
+
+    return uploaded_files
 
 
 @cache
@@ -424,7 +660,6 @@ def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, A
             "resource": event.get("resource", "unknown"),
             "request_context": event.get("requestContext", {})
         })
-        logger.debug("Full event received", extra={"event": event})
 
         result = app.resolve(event, context)
         logger.info("Request resolved", extra={"status_code": result.get("statusCode")})
@@ -433,7 +668,6 @@ def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, A
         logger.exception("Unhandled exception in lambda_handler", extra={
             "error": str(e),
             "error_type": type(e).__name__,
-            "event": event
         })
         metrics.add_metric(name="UnhandledExceptions", unit=MetricUnit.Count, value=1)
 

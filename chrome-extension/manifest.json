@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Just My Links",
+  "version": "1.0",
+  "description": "Save pages to your Just My Links archive",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Save to Just My Links"
+  },
+  "options_page": "options.html"
+}

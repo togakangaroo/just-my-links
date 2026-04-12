@@ -338,6 +338,7 @@ def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
     # Parse multipart data using callback-based approach with streaming to S3
     uploaded_files = {}
     current_part_name = None
+    current_filename = None
     current_upload = None
     current_headers = {}
     header_name_buffer = []
@@ -346,8 +347,9 @@ def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
     document_part_too_large = False
 
     def on_part_begin():
-        nonlocal current_part_name, current_upload, current_headers
+        nonlocal current_part_name, current_filename, current_upload, current_headers
         current_part_name = None
+        current_filename = None
         current_upload = None
         current_headers = {}
 
@@ -361,9 +363,9 @@ def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
             return
         success = current_upload.complete()
         if success:
-            uploaded_files[current_part_name] = current_upload.get_size()
+            uploaded_files[current_filename] = current_upload.get_size()
             logger.debug("Successfully uploaded file", extra={
-                "file_name": current_part_name,
+                "file_name": current_filename,
                 "size": current_upload.get_size()
             })
         else:
@@ -391,7 +393,7 @@ def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
         header_value_buffer.clear()
 
     def on_headers_finished():
-        nonlocal current_part_name, current_upload, document_part_found
+        nonlocal current_part_name, current_filename, current_upload, document_part_found
         # Parse Content-Disposition header to get field name
         content_disp = current_headers.get('content-disposition', '')
         if 'name=' in content_disp:
@@ -432,6 +434,7 @@ def _stream_multipart_to_s3(event, document_s3_path: str) -> Dict[str, int]:
                         s3_content_type = 'text/plain'
 
                 # Create streaming upload
+                current_filename = filename
                 file_key = f"{document_folder}/{filename}"
                 current_upload = StreamingS3Upload(
                     s3_client=s3_client,

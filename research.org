@@ -1,0 +1,502 @@
+* AI-based document search
+:PROPERTIES:
+:org-ai-noweb: yes
+:END:
+I want to work on the hardest, most handwavy thing first, and I kinda understand what needs to be done for the rest of it. What I don't know is how to implement document search with AI. I'm going to ask AI of course, but what should I ask it?
+
+#+name: rag-research/requirements-and-brainstorms-solutions-query
+#+begin_quote
+I am a principal developer who understands software development well.
+
+I would like to build a system that takes up to 10,000 text and html documents of 1-10 pages each and catalogs them so that I can occasionally search through themI would like to use free software and free tiers of hosted software as much as possible with any serverless bits hosted on AWS. I would like to be able to search using natural language so "articles about criminal networks" should show me articles about cartels.
+
+Regarding usage, it would be for personal use and I would query it only a few times per day
+
+Help me think through some options in how to create this system. For each option give a sentence or two on how would storing/indexing a document work and how searching for documents would work
+#+end_quote
+
+#+begin_ai
+<<rag-research/requirements-and-brainstorms-solutions-query()>>
+
+[AI]: # Document Cataloging System Options
+
+## 1. Elasticsearch + Simple UI
+- **Storing/Indexing**: Documents are parsed (HTML to text), processed with natural language capabilities, and indexed in Elasticsearch running on a small EC2 instance or using AWS Elasticsearch Service free tier.
+- **Searching**: A lightweight web UI or CLI tool queries Elasticsearch's natural language search capabilities with relevance scoring. Could implement basic semantic search with the built-in text analysis features.
+
+## 2. AWS Kendra + S3
+- **Storing/Indexing**: Store documents in S3 buckets and use AWS Kendra for intelligent search (has a free tier with limitations).
+- **Searching**: Kendra provides natural language processing out of the box, handling queries like "articles about criminal networks" with semantic understanding, though the free tier is limited.
+
+## 3. SQLite + Embeddings
+- **Storing/Indexing**: Parse documents, generate embeddings using open-source models (like SentenceTransformers), and store in SQLite with text and vector extensions.
+- **Searching**: Convert search query to embedding vector and perform similarity search in the database to find relevant documents.
+
+## 4. Local Typesense Server
+- **Storing/Indexing**: Run Typesense (lightweight search engine) locally or on a small EC2 instance, indexing document content with automatic text analysis.
+- **Searching**: Provides typo-tolerance and natural language search with ranking, accessible through REST API or client libraries.
+
+## 5. Meilisearch + Lambda
+- **Storing/Indexing**: Use Meilisearch (open-source search engine) running on a small EC2 instance with documents processed by Lambda functions when added to S3.
+- **Searching**: Provides natural language search with good defaults for relevancy ranking through a simple API.
+
+## 6. Org-roam (Emacs-based)
+- **Storing/Indexing**: Convert documents to org format and use org-roam's SQLite backend for indexing and linking.
+- **Searching**: Use org-roam's search capabilities or extend with custom queries; works locally within Emacs.
+
+## 7. AWS Amplify + OpenSearch
+- **Storing/Indexing**: Use Amplify to handle storage in S3 and indexing in OpenSearch with serverless functions for processing.
+- **Searching**: Query through GraphQL interface with natural language capabilities from OpenSearch.
+
+## 8. Postgres + pgvector
+- **Storing/Indexing**: Store documents in Postgres, generate embeddings with open-source models, and index with pgvector extension.
+- **Searching**: Convert natural language queries to embeddings and perform vector similarity search.
+
+[ME]:
+#+end_ai
+
+Lets dig into these more
+
+** +Elasticsearch Option+
+Given the conversation below, I don't think this is going to fly
+#+begin_ai
+I am a principal developer who understands software development well. Earlier, I asked you the following:
+
+<<rag-research/requirements-and-brainstorms-solutions-query()>>
+
+---
+One of your replies was
+
+
+## 1. Elasticsearch + Simple UI
+- **Storing/Indexing**: Documents are parsed (HTML to text), processed with natural language capabilities, and indexed in Elasticsearch running on a small EC2 instance or using AWS Elasticsearch Service free tier.
+- **Searching**: A lightweight web UI or CLI tool queries Elasticsearch's natural language search capabilities with relevance scoring. Could implement basic semantic search with the built-in text analysis features.
+
+---
+
+I want you to expound on how this would work. I've only used elasticsearch only lightly. I understand its basic strucutre, but what are the "natural language capabilities" you refer to? Will they actually help with my goals of being able to search by concept not just term?
+
+
+[AI]: # Elasticsearch Natural Language Search Capabilities
+
+You're right to question the specific NLP capabilities I referenced. Let me clarify what Elasticsearch can and cannot do for your conceptual search goals:
+
+## What Elasticsearch Offers Out-of-the-Box
+
+1. **Text Analysis Pipeline**: Elasticsearch breaks text down using analyzers that handle:
+   - Tokenization
+   - Stemming (reducing words to root forms)
+   - Stop word removal
+   - Synonyms matching
+
+2. **Query Types Supporting Semantic-Adjacent Search**:
+   - `match` queries with fuzzy matching
+   - `more_like_this` for finding similar documents
+   - `multi_match` with field boosting
+
+3. **BM25 Relevance Algorithm**: A probabilistic ranking model that's better than basic TF-IDF
+
+## Limitations for Concept Searching
+
+Vanilla Elasticsearch is primarily **keyword-based with extensions** - it doesn't truly understand concepts like "criminal networks" → "cartels" unless explicitly configured with synonyms.
+
+## Making It More Conceptual
+
+To achieve true concept-based search, you'd need to enhance Elasticsearch:
+
+1. **Custom Synonym Dictionaries**: Manually define domain-specific concept mappings
+   ```json
+   PUT /my_index/_settings
+   {
+     "index": {
+       "analysis": {
+         "filter": {
+           "my_synonym_filter": {
+             "type": "synonym",
+             "synonyms": [
+               "criminal network, cartel, syndicate, mafia"
+             ]
+           }
+         }
+       }
+     }
+   }
+   ```
+
+2. **Vector Search with Elasticsearch (v7.14+)**:
+   - Generate embeddings with an external model (e.g., AWS Lambda calling an embedding API)
+   - Store as dense vectors in Elasticsearch
+   - Use k-NN search for semantic similarity
+
+3. **Custom Plugins**:
+   - The Elasticsearch Learning to Rank plugin
+   - NLP integration plugins
+
+## Practical Setup for Your Scale
+
+For your 10,000 document case, I'd recommend:
+- Standard Elasticsearch setup with custom synonyms as the minimum
+- Adding vector search capabilities if you want true concept searching
+- Processing pipeline: AWS Lambda functions to extract text, generate embeddings, and index into Elasticsearch
+
+If true conceptual search is critical, you might consider alternative options like the embedding-based approaches I mentioned in other solutions, as they're more natively designed for semantic understanding.
+
+[ME]:
+#+end_ai
+
+** +AWS Kendra+
+This is going to be too expensive. You have to provision Kendra and pay for its presence, not its use. According to the aws pricing calculator, it would be something like $860 per month
+
+#+begin_ai
+Earlier, I asked you the following:
+
+<<rag-research/requirements-and-brainstorms-solutions-query()>>
+
+---
+One of your replies was
+
+
+## 2. AWS Kendra + S3
+- **Storing/Indexing**: Store documents in S3 buckets and use AWS Kendra for intelligent search (has a free tier with limitations).
+- **Searching**: Kendra provides natural language processing out of the box, handling queries like "articles about criminal networks" with semantic understanding, though the free tier is limited.
+
+---
+
+I have never heard of AWS Kendra. What is it? Does it use other well known open source tools under the hood? What is its pricing?
+
+[AI]: # AWS Kendra
+
+AWS Kendra is Amazon's enterprise search service that uses machine learning to enable natural language searching of content across your documents. It's designed specifically for document search with semantic understanding.
+
+## Key Features
+- Natural language processing capabilities
+- Semantic search (understands meaning, not just keywords)
+- Document ranking with relevance scoring
+- Support for various document types (HTML, PDF, MS Office, etc.)
+- Incremental learning from user interactions
+- Built-in document connectors for popular repositories
+
+## Technology
+Kendra is a proprietary AWS service built on Amazon's own ML models, not an AWS wrapper around open source tools like Elasticsearch or Solr. It uses deep learning models specifically trained for document understanding and question answering.
+
+## Pricing
+Kendra has a tiered pricing model:
+
+1. **Developer Edition**:
+   - $0.75 per hour (~$550/month)
+   - Up to 5 data sources
+   - Maximum of 25,000 documents
+
+2. **Enterprise Edition**:
+   - $2.50 per hour (~$1,800/month)
+   - Up to 50 data sources
+   - Maximum of 100,000 documents
+
+3. **Additional costs**:
+   - Document storage: $0.05-$0.07 per 1,000 documents per month
+   - Queries: $0.75-$1.00 per 1,000 queries
+
+There is a **free tier** that includes:
+- 750 hours of Developer Edition per month for the first 30 days
+- Limited to a single index
+
+For your personal use case with 10,000 documents, Kendra would work but might be relatively expensive compared to other options if you need it beyond the free trial period.
+
+[ME]: It sounds from this that this is something I provision and run, correct? I am being charged even when it is not in use?
+
+[AI]: Yes, that's correct. AWS Kendra follows a different pricing model than many other AWS services:
+
+## AWS Kendra Pricing Model
+
+- It's charged on an **hourly basis** for the entire time your index is provisioned, regardless of whether you're actively using it or not
+- You pay for the index as long as it exists, even if it's idle with no queries being run
+- There is no true "serverless" or "pay-per-use" option for Kendra
+
+This is different from truly serverless AWS services like Lambda or DynamoDB where you only pay for actual usage. With Kendra, you're essentially paying for a continuously running service.
+
+For your personal use case where you mentioned querying only a few times per day, this pricing model is not ideal, as you'd be paying for 24/7 availability ($550+ per month for Developer Edition) while only using it occasionally.
+
+If cost is a significant factor, you might want to consider one of the other options I mentioned previously that follow a more usage-based pricing model or are entirely self-hosted.
+
+[ME]:
+#+end_ai
+
+** +SQLite + Embeddings+
+This is fine. I still have to bring my own embedding engine but its fine, but in talking through this I remembered that ChromaDB is a thing!
+#+begin_ai
+Earlier, I asked you the following:
+
+<<rag-research/requirements-and-brainstorms-solutions-query()>>
+
+---
+One of your replies was
+
+
+## 3. SQLite + Embeddings
+- **Storing/Indexing**: Parse documents, generate embeddings using open-source models (like SentenceTransformers), and store in SQLite with text and vector extensions.
+- **Searching**: Convert search query to embedding vector and perform similarity search in the database to find relevant documents.
+
+---
+
+I want you to expound on how this would work. Specifically I want to touch on the following questions:
+- My documents aren't long, a few pages at most. Will I be able to generate embeddings for these reasonably well in an aws lambda if I generate these one or two at a time?
+- I wasn't aware that sqlite had the ability to search vectors. How well would that work?
+- Where would be the recommendation that I put sqlite? just in s3 and load it into memory each time? I suppose I'd have to implement some sort of locking mechanism as well.
+
+[AI]: # SQLite + Embeddings Approach - Deep Dive
+
+## Embedding Generation in AWS Lambda
+
+Yes, you can definitely generate embeddings for your documents in AWS Lambda, especially given their modest size:
+
+- Short documents (1-10 pages) are ideal for embedding generation in Lambda
+- Modern sentence/document embedding models like `all-MiniLM-L6-v2` are compact (~90MB) and efficient
+- Lambda's default 15-minute timeout provides ample time to process multiple documents
+- With 10GB memory allocation, you could easily handle embedding generation for even larger batches
+
+The process would be:
+1. Extract text from your documents (HTML parsing if needed)
+2. Potentially chunk documents into paragraphs (optional for your document size)
+3. Generate embeddings using a model like SentenceTransformers
+4. Store results in SQLite
+
+## SQLite Vector Search Capabilities
+
+SQLite itself doesn't natively support vector search, but there are excellent extensions:
+
+- **SQLite-VSS**: A purpose-built vector similarity search extension
+- **sqlite-vss**: Supports both L2 and cosine distance metrics
+- **Performance**: Works surprisingly well for collections up to millions of embeddings
+- **Simplicity**: Far easier to manage than dedicated vector DBs for your scale
+
+Example setup:
+```sql
+-- Load the extension
+SELECT load_extension('sqlite-vss');
+
+-- Create a virtual table with vector support
+CREATE VIRTUAL TABLE embeddings USING vss0(
+  embedding(384),  -- Dimension of your embeddings
+  document_id UNINDEXED,
+  content UNINDEXED
+);
+```
+
+## SQLite Storage and Access Patterns
+
+For your usage pattern (few queries per day), I recommend:
+
+- **Storage**: Keep the SQLite DB in EFS (Elastic File System) mounted to your Lambda
+  - EFS provides persistent storage that multiple Lambdas can access
+  - Avoids loading the entire DB into memory each time
+  - Handles concurrent access automatically
+
+- **Alternative**: If you prefer S3:
+  - Store the DB in S3
+  - Download to Lambda's `/tmp` at the start of a request
+  - Upload back to S3 after modifications
+  - Use DynamoDB for a simple locking mechanism to prevent concurrent writes
+
+- **Optimization**: Implement a warm-up mechanism to keep a Lambda instance alive between requests
+
+Since your usage is personal and infrequent, this approach offers an excellent balance of simplicity, cost-effectiveness, and performance without over-engineering.
+
+[ME]: What if we used something like chromadb instead of sqlite, would that work better?
+
+[AI]: # ChromaDB vs SQLite for Your Document Search System
+
+## Advantages of ChromaDB Over the SQLite Approach
+
+1. **Purpose-built for embeddings**:
+   - ChromaDB is specifically designed for vector search, while SQLite+extensions is a more generic solution adapted for vectors
+   - Native optimizations for semantic similarity searches
+   - Better query performance as your collection grows
+
+2. **Simplified development**:
+   - Built-in document processing and embedding generation
+   - No need to manage SQLite extensions or configure vector indexes
+   - Clean Python API with intuitive search methods
+
+3. **AWS Lambda compatibility**:
+   - Works well in serverless environments
+   - Can run entirely in-memory for fast queries
+   - Supports persistent storage options
+
+4. **Advanced querying capabilities**:
+   - Metadata filtering alongside vector search
+   - Adjustable relevance parameters
+   - Supports hybrid search (combining vector similarity with keyword matching)
+
+## Implementation with ChromaDB
+
+```python
+import chromadb
+from chromadb.config import Settings
+
+# Create client (in-memory for Lambda execution)
+client = chromadb.Client(Settings(
+    chroma_db_impl="duckdb+parquet",
+    persist_directory="/tmp/chromadb" # For Lambda
+))
+
+# Create or get collection
+collection = client.get_or_create_collection("documents")
+
+# Adding documents (ChromaDB can handle embedding generation)
+collection.add(
+    documents=["content of document 1", "content of document 2"],
+    metadatas=[{"source": "file1.html"}, {"source": "file2.html"}],
+    ids=["doc1", "doc2"]
+)
+
+# Searching (natural language queries work directly)
+results = collection.query(
+    query_texts=["articles about criminal networks"],
+    n_results=5
+)
+```
+
+## Storage Options with ChromaDB
+
+1. **Persistent on EFS** (recommended):
+   - Mount EFS to Lambda and use as ChromaDB's persistence directory
+   - Multiple Lambdas can access the same data
+   - ChromaDB handles concurrent access
+
+2. **S3-backed**:
+   - Store ChromaDB files in S3
+   - Download to Lambda's `/tmp` at request start
+   - Upload back after modifications
+   - Requires manual implementation of locking
+
+3. **Managed ChromaDB**:
+   - ChromaDB offers a cloud version if you outgrow the self-hosted approach
+
+## Summary
+
+ChromaDB would indeed work better than SQLite for your use case because:
+
+1. It's specifically designed for the vector search problem you're solving
+2. Reduces development complexity significantly
+3. Handles your scale (10,000 short documents) perfectly
+4. Provides superior semantic search capabilities out of the box
+5. Has a growing ecosystem and active maintenance
+
+The SQLite approach is more DIY, while ChromaDB gives you a ready-made solution that's optimized for exactly what you're trying to accomplish.
+
+[ME]: Would the approach be similar with me just storing chroma's db file in EFS?
+
+[AI]: # ChromaDB with EFS: Implementation Approach
+
+Yes, the approach would be very similar but simpler than the SQLite solution. You would store ChromaDB's persistence files in EFS rather than managing SQLite files.
+
+## Implementation Details
+
+### 1. EFS Setup
+
+```bash
+# Create an EFS file system in your AWS account
+aws efs create-file-system --creation-token ChromaDB-storage
+
+# Create mount targets in your VPC subnets
+aws efs create-mount-target --file-system-id fs-12345678 --subnet-id subnet-12345678 --security-groups sg-12345678
+```
+
+### 2. Lambda Configuration
+
+- Configure your Lambda to connect to your VPC
+- Add the EFS file system as a Lambda file system attachment
+- Mount EFS at a directory like `/mnt/chromadb`
+
+```yaml
+# Example SAM/CloudFormation snippet
+Resources:
+  DocumentSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FileSystemConfigs:
+        - Arn: !GetAtt ChromaDBAccessPoint.Arn
+          LocalMountPath: /mnt/chromadb
+```
+
+### 3. ChromaDB Implementation
+
+```python
+import chromadb
+from chromadb.config import Settings
+
+def handler(event, context):
+    # Initialize ChromaDB with persistence to EFS
+    client = chromadb.Client(Settings(
+        chroma_db_impl="duckdb+parquet",
+        persist_directory="/mnt/chromadb"  # EFS mount point
+    ))
+
+    # Get your collection
+    collection = client.get_or_create_collection("documents")
+
+    # For document indexing:
+    if event.get('action') == 'index':
+        document_content = event.get('content')
+        document_id = event.get('id')
+        metadata = event.get('metadata', {})
+
+        collection.add(
+            documents=[document_content],
+            metadatas=[metadata],
+            ids=[document_id]
+        )
+        return {"status": "indexed", "id": document_id}
+
+    # For searching:
+    elif event.get('action') == 'search':
+        query = event.get('query')
+        results = collection.query(
+            query_texts=[query],
+            n_results=10
+        )
+        return {
+            "results": results
+        }
+```
+
+## Advantages of This Approach
+
+1. **Simplicity**:
+   - ChromaDB handles all the vector search complexity
+   - No need to manage SQLite extensions or implement custom vector search logic
+
+2. **Persistence**:
+   - EFS provides durable storage that persists between Lambda invocations
+   - No need to load/save from S3 for each request
+
+3. **Concurrency**:
+   - ChromaDB handles concurrent access patterns
+   - EFS supports multiple Lambda instances accessing the same data
+   - No need to implement your own locking mechanism
+
+4. **Performance**:
+   - Once loaded, ChromaDB is optimized for vector similarity search
+   - EFS provides reasonable read/write performance for your scale
+
+## Considerations
+
+- Keep your Lambda warm to avoid cold starts
+- Monitor EFS usage costs (though they'll be minimal for your use case)
+- Consider regular backups of your ChromaDB data to S3
+
+This approach is significantly more straightforward than the SQLite solution while offering better semantic search capabilities out of the box. ChromaDB's files stored in EFS will persist between invocations, making this a clean, serverless solution for your document search system.
+
+[ME]:
+#+end_ai
+
+** ChromaDB
+
+* Workflow helper
+#+begin_src emacs-lisp :results silent
+  (spacemacs/set-leader-keys "az"
+    (lambda ()
+      (interactive)
+      (when-let (buf-name "*ein: http://127.0.0.1:8888/current-work.ipynb*")
+            (switch-to-buffer buf-name))))
+#+end_src

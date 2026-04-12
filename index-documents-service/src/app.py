@@ -1,7 +1,11 @@
 import json
 import os
-import sqlite3
 import struct
+
+try:
+    import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension
+except ImportError:
+    import sqlite3  # type: ignore[no-redef]
 from contextlib import contextmanager
 from functools import cache
 from typing import Any, Generator
@@ -150,6 +154,9 @@ def _split_long_text(text: str) -> list[str]:
     return chunks
 
 
+MIN_CHUNK_CHARS = 100  # discard nav labels, image captions, lone headings, etc.
+
+
 def chunk_text(text: str) -> list[str]:
     """Split text on paragraph boundaries; further split paragraphs that are too long."""
     # Normalise whitespace and split on blank lines
@@ -157,6 +164,8 @@ def chunk_text(text: str) -> list[str]:
 
     chunks: list[str] = []
     for para in paragraphs:
+        if len(para) < MIN_CHUNK_CHARS:
+            continue
         if len(para) <= MAX_CHUNK_CHARS:
             chunks.append(para)
         else:

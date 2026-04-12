@@ -82,12 +82,23 @@ def test_extract_text_passthrough_for_plain(app_module):
 # ---------------------------------------------------------------------------
 
 
-def test_chunk_text_short_document_is_single_chunk(app_module):
-    text = "This is a short article.\n\nIt has two paragraphs."
+def test_chunk_text_splits_on_paragraph_boundaries(app_module):
+    para1 = "This is the first paragraph of the article. " * 3  # ~132 chars, above MIN
+    para2 = "This is the second paragraph of the article. " * 3  # ~138 chars, above MIN
+    text = f"{para1}\n\n{para2}"
     chunks = app_module.chunk_text(text)
     assert len(chunks) == 2
-    assert chunks[0] == "This is a short article."
-    assert chunks[1] == "It has two paragraphs."
+    assert chunks[0] == para1.strip()
+    assert chunks[1] == para2.strip()
+
+
+def test_chunk_text_filters_short_paragraphs(app_module):
+    short = "Too short."
+    long_para = "This paragraph is long enough to survive the minimum length filter. " * 2
+    text = f"{short}\n\n{long_para}"
+    chunks = app_module.chunk_text(text)
+    assert len(chunks) == 1
+    assert chunks[0] == long_para.strip()
 
 
 def test_chunk_text_long_paragraph_is_split(app_module):

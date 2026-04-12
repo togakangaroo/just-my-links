@@ -1,6 +1,9 @@
 # Use the official AWS Lambda Python runtime
 FROM public.ecr.aws/lambda/python:3.13
 
+# Install build deps needed to compile pysqlite3 from source
+RUN dnf install -y gcc sqlite-devel
+
 # Copy requirements and install dependencies
 COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
 RUN pip install uv && \

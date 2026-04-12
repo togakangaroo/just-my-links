@@ -1,0 +1,161 @@
+#+TITLE: Semantic Search: Research & Decisions
+#+DATE: 2026-04-12
+#+DESCRIPTION: Research into embedding generation and vector storage for semantic search
+
+* Context & Constraints
+
+Personal Pocket replacement running entirely on AWS Lambda. Key constraints:
+
+- *Low traffic*: ~100 documents indexed/month, ~50 searches/month
+- *Lambda execution*: arm64 container images, no persistent server
+- *Cost target*: stay within or very close to AWS free tier
+- *Storage*: already using S3; no VPC (adding VPC costs $8+/mo for endpoints)
+- *Execution contexts*:
+  - ~index-documents~ Lambda (async, SQS-triggered) — cold starts acceptable
+  - CLI query tool (local machine) — embeds a query and searches index
+  - Eventually a search backend Lambda hit from chrome extension, app, etc.
+
+* Cost baseline
+
+At this scale, *all options below cost under $0.02/month for embeddings + storage*.
+Cost is not a meaningful differentiator here. The real tradeoffs are:
+complexity, cold start latency, ecosystem maturity, and operational risk.
+
+* Options Evaluated
+
+** Option A — Bedrock Titan V2 + sqlite-vec ✅ CHOSEN
+
+*** Embedding: Amazon Bedrock Titan Text Embeddings V2
+
+An AWS-managed embedding API. Call it via boto3 from Lambda; no libraries to
+bundle. 8,192 token input limit. Returns 256, 512, or 1024-dim vectors.
+
+- *Cost*: $0.00011/1K tokens. At avg 750 tokens/doc + chunking: ~$0.01/month
+- *Cold start impact*: None. Just boto3 which is already in the Lambda runtime.
+- *Availability*: us-east-1, us-west-2, others. Must be enabled per region in console.
+
+*** Vector storage: sqlite-vec (single SQLite file in S3)
+
+A vector search extension for SQLite, written in C with no dependencies.
+Stores vectors in a virtual table alongside regular SQL columns (URL, metadata),
+so vectors and document metadata live in one file.
+
+- *S3 pattern*: Download ~.db~ file from S3 to ~/tmp~ on Lambda startup →
+  upsert vectors → re-upload to S3. Single binary file, simple sync.
+- *File size*: 100 docs × 10 chunks × 1024 dims × 4 bytes ≈ 4 MB. Negligible.
+- *ARM64 wheel*: Available on PyPI (~sqlite-vec~). Was a gap in 2024, now resolved.
+- *Maturity*: v0.1.7 (March 2026). Brute-force search (no ANN) — fine for
+  hundreds to a few thousand documents.
+- *Lambda ~/tmp~*: 512 MB default is more than sufficient.
+
+*** Why chosen over alternatives
+
+- No container bloat — boto3 already in Lambda runtime
+- Single SQLite file holds vectors + URLs + metadata in one place
+  (contrast with FAISS which requires a separate metadata file)
+- No SQLite version monkey-patching (unlike ChromaDB)
+- Stays 100% in AWS — one billing relationship, one auth model
+- CLI query tool uses same pattern: call Bedrock + download .db from S3
+
+** Option B — fastembed (local ONNX) + sqlite-vec
+
+fastembed uses ONNX Runtime instead of PyTorch. Models baked into Docker image.
+
+- *Pros*: $0/call for embeddings, fully self-contained
+- *Cons*: 5–15s cold starts (tolerable for async indexing, but problematic for
+  a future search Lambda endpoint); 500MB–1GB larger container image
+- *Verdict*: Good fallback if Bedrock costs unexpectedly rise
+
+** Option C — Bedrock + FAISS
+
+FAISS stores only vectors; requires a parallel metadata JSON for URL lookups.
+Two-file S3 sync is fragile. No individual vector deletion on all index types.
+sqlite-vec is simpler at this scale with no performance trade-off.
+
+** Option D — Bedrock + Amazon S3 Vectors (native)
+
+GA'd December 2025. No file sync needed — fully managed vector API via boto3.
+Eliminates the S3 download/upload cycle. Ecosystem too new to rely on now.
+*Revisit in ~6 months.*
+
+** Option E — ChromaDB (previous placeholder)
+
+Uses SQLite internally but requires a version monkey-patch on Lambda runtimes.
+Syncs a directory of files rather than a single file. sqlite-vec is strictly
+simpler for this use case with no advantages lost.
+
+* Decision Matrix
+
+| Option                    | Embed cost | Cold start (index λ) | Complexity | Ecosystem |
+|---------------------------+------------+----------------------+------------+-----------|
+| A: Bedrock + sqlite-vec   | ~$0.01/mo  | <1s                  | Low-Med    | Maturing  |
+| B: fastembed + sqlite-vec | $0         | 5–15s                | Medium     | Good      |
+| C: Bedrock + FAISS        | ~$0.01/mo  | <1s                  | Medium     | Mature    |
+| D: Bedrock + S3 Vectors   | ~$0.01/mo  | <1s                  | Low        | Very new  |
+| E: Bedrock + ChromaDB     | ~$0.01/mo  | <1s                  | Med-High   | Good      |
+
+* Decision: Option A — Bedrock Titan V2 + sqlite-vec
+
+** Schema
+
+#+BEGIN_SRC sql
+CREATE TABLE documents (
+    id          INTEGER PRIMARY KEY,
+    url         TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_text  TEXT,
+    embedding   BLOB NOT NULL
+);
+#+END_SRC
+
+** Search query
+
+#+BEGIN_SRC sql
+SELECT DISTINCT url, MIN(distance) as best_match
+FROM documents
+WHERE embedding MATCH ?
+ORDER BY best_match
+LIMIT 10;
+#+END_SRC
+
+* Chunking Strategy
+
+** Why chunking is necessary
+
+Embedding a whole long article produces a single blurry vector that averages all
+topics. An article covering Python decorators *and* metaclasses may not surface
+for a "decorators" query because the signal is diluted. Chunking lets the
+relevant passage dominate for a given query.
+
+** Approach: paragraph-boundary chunking with token-count fallback
+
+1. Strip HTML to plain text at index time (raw HTML already stored in S3)
+2. Split on paragraph boundaries (~<p>~ tags or blank lines) where possible
+3. If any paragraph chunk exceeds ~500 tokens, split further at ~500-token
+   windows with ~50-token overlap
+4. Store one row per chunk in sqlite-vec, all sharing the same ~url~
+
+The overlap prevents poor embeddings at chunk boundaries where a sentence is
+cut in half. Each boundary idea appears in full context in at least one chunk.
+
+** Expected scale
+
+A typical long article produces 2–10 chunks. At 100 docs/month:
+- ~1,000 Bedrock API calls/month → still essentially free
+- sqlite-vec file stays well under 10 MB
+
+** Cost monitoring plan
+
+Start simple. If Bedrock costs or index size grow unexpectedly, revisit:
+- Smaller embedding dimension (256 vs 1024)
+- Coarser chunking strategy
+- Re-ranking top-N results with a cross-encoder (avoids indexing more vectors)
+
+* Future Considerations
+
+- *S3 Vectors*: Revisit in ~6 months once ecosystem matures. Would eliminate
+  the S3 download/upload cycle entirely.
+- *Re-ranking*: A cross-encoder re-ranks top-N vector matches for higher precision.
+  Adds latency/cost but improves quality if needed.
+- *Tagging integration*: Tags could live in the same ~.db~ file as a separate
+  table, making it a unified local index.

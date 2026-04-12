@@ -23,6 +23,11 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Set to true for first deployment to use public base image
 
+  ImageTag:
+    Type: String
+    Default: "latest"
+    Description: Docker image tag to deploy (e.g. git SHA). Use 'latest' only for initial bootstrapping.
+
 Conditions:
   IsFirstRunCondition: !Equals
     - !Ref IsFirstRun
@@ -368,8 +373,9 @@ Resources:
       Description: "Just My Links - store submitted documents"
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${StoreDocumentEcrRepository}:latest"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${StoreDocumentEcrRepository}:${ImageTag}"
       PackageType: Image
+      Architectures: [arm64]
       Timeout: 300
       MemorySize: 1024
       ReservedConcurrentExecutions: 1  # Single concurrent execution
@@ -389,8 +395,9 @@ Resources:
       Description: "Just My Links - index documents into ChromaDB"
       Role: !GetAtt IndexDocumentsLambdaRole.Arn
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}:latest"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}:${ImageTag}"
       PackageType: Image
+      Architectures: [arm64]
       Timeout: 300
       MemorySize: 1024
       ReservedConcurrentExecutions: 1  # Single concurrent execution

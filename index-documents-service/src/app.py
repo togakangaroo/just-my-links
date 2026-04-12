@@ -5,7 +5,6 @@ from functools import cache
 
 import boto3
 from aws_lambda_powertools import Logger, Tracer, Metrics
-from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
@@ -59,7 +58,7 @@ def process_sqs_record(record: Dict[str, Any]) -> None:
         raise
 
 
-@logger.inject_lambda_context(correlation_id_path=correlation_paths.SQS)
+@logger.inject_lambda_context()
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:

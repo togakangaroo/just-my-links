@@ -156,7 +156,7 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
                 authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose)
 
             # Use --force-compression to avoid blob checking issues with Podman
-            run_command(['docker', 'push', '--force-compression', full_image_uri], verbose=verbose)
+            run_command(['docker', 'push', full_image_uri], verbose=verbose)
             print(f"Image pushed to ECR: {full_image_uri}")
             return full_image_uri
         except subprocess.CalledProcessError as e:

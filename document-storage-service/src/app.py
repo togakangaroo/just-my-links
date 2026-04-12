@@ -53,74 +53,69 @@ def store_document():
     document_s3_path = hashlib.sha256(document_url.encode('utf-8')).hexdigest()
     logger.debug("Generated S3 path for document", extra={"document_url": document_url, "document_s3_path": document_s3_path})
 
+    application_bucket, documents_folder = get_documents_folder()
+    document_folder = f"{documents_folder}/{document_s3_path}"
+
     try:
-        upload_results = _stream_multipart_to_s3(app.current_event, document_s3_path)
+        with backup_in_case_of_error(application_bucket, document_folder):
+            upload_results = _stream_multipart_to_s3(app.current_event, document_s3_path)
+
+            # Determine entrypoint file from uploaded files
+            uploaded_files = list(upload_results.keys())
+            if 'document.html' in uploaded_files:
+                entrypoint = 'document.html'
+            elif 'document.txt' in uploaded_files:
+                entrypoint = 'document.txt'
+            else:
+                raise MultipartParsingError("No document.html or document.txt file was successfully uploaded")
+
+            # Create metadata.json
+            metadata = {
+                "documentUrl": document_url,
+                "entrypoint": entrypoint,
+                "files": uploaded_files,
+                "timestamp": json.dumps({"$date": {"$numberLong": str(int(__import__('time').time() * 1000))}})
+            }
+
+            metadata_key = f"{document_folder}/.metadata.json"
+            s3_client.put_object(
+                Bucket=application_bucket,
+                Key=metadata_key,
+                Body=json.dumps(metadata, indent=2),
+                ContentType='application/json'
+            )
+            logger.info("Stored metadata", extra={"metadata_key": metadata_key, "entrypoint": entrypoint})
+
+            # Publish event to EventBridge
+            try:
+                event_bus_name = get_event_bus_name()
+                event_detail = {
+                    "folderPath": document_folder,
+                    "documentUrl": document_url
+                }
+
+                eventbridge_client.put_events(
+                    Entries=[
+                        {
+                            'Source': 'just-my-links.document-storage',
+                            'DetailType': 'Document stored',
+                            'Detail': json.dumps(event_detail),
+                            'EventBusName': event_bus_name
+                        }
+                    ]
+                )
+                logger.info("Published event to EventBridge", extra={"event_detail": event_detail})
+
+            except Exception as e:
+                logger.error("Failed to publish event to EventBridge", extra={"error": str(e)})
+                # Don't fail the request if event publishing fails
+
     except MultipartParsingError as e:
         return Response(
             status_code=e.status_code,
             content_type=content_types.APPLICATION_JSON,
             body={"error": e.message}
         )
-
-    application_bucket, documents_folder = get_documents_folder()
-    document_folder = f"{documents_folder}/{document_s3_path}"
-
-    # Determine entrypoint file from uploaded files
-    entrypoint = None
-    uploaded_files = list(upload_results.keys())
-
-    if 'document.html' in uploaded_files:
-        entrypoint = 'document.html'
-    elif 'document.txt' in uploaded_files:
-        entrypoint = 'document.txt'
-    else:
-        return Response(
-            status_code=400,
-            content_type=content_types.APPLICATION_JSON,
-            body={"error": "No document.html or document.txt file was successfully uploaded"}
-        )
-
-    with backup_in_case_of_error(application_bucket, document_folder):
-        # Create metadata.json
-        metadata = {
-            "documentUrl": document_url,
-            "entrypoint": entrypoint,
-            "files": uploaded_files,
-            "timestamp": json.dumps({"$date": {"$numberLong": str(int(__import__('time').time() * 1000))}})
-        }
-
-        metadata_key = f"{document_folder}/.metadata.json"
-        s3_client.put_object(
-            Bucket=application_bucket,
-            Key=metadata_key,
-            Body=json.dumps(metadata, indent=2),
-            ContentType='application/json'
-        )
-        logger.info("Stored metadata", extra={"metadata_key": metadata_key, "entrypoint": entrypoint})
-
-        # Publish event to EventBridge
-        try:
-            event_bus_name = get_event_bus_name()
-            event_detail = {
-                "folderPath": document_folder,
-                "documentUrl": document_url
-            }
-
-            eventbridge_client.put_events(
-                Entries=[
-                    {
-                        'Source': 'just-my-links.document-storage',
-                        'DetailType': 'Document stored',
-                        'Detail': json.dumps(event_detail),
-                        'EventBusName': event_bus_name
-                    }
-                ]
-            )
-            logger.info("Published event to EventBridge", extra={"event_detail": event_detail})
-
-        except Exception as e:
-            logger.error("Failed to publish event to EventBridge", extra={"error": str(e)})
-            # Don't fail the request if event publishing fails
 
     return Response(
         status_code=200,

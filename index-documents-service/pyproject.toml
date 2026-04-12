@@ -6,8 +6,12 @@ requires-python = ">=3.13"
 dependencies = [
     "aws-lambda-powertools[all]>=3.0.0",
     "boto3>=1.35.0",
-    "chromadb>=1.0.12",
+    "sqlite-vec>=0.1.7",
+    "beautifulsoup4>=4.12.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 
 [build-system]
 requires = ["hatchling"]

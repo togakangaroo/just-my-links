@@ -360,9 +360,17 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                   - s3:ListBucket
-                Resource: 
+                Resource:
                   - !Sub "${ApplicationBucket.Arn}/*"
                   - !GetAtt ApplicationBucket.Arn
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
 
   # Document Storage Lambda Function
   StoreDocumentFunction:
@@ -392,7 +400,7 @@ Resources:
     Condition: IsNotFirstRunCondition
     Properties:
       FunctionName: !Sub "just-my-links--index-documents--${Environment}"
-      Description: "Just My Links - index documents into ChromaDB"
+      Description: "Just My Links - index documents into sqlite-vec"
       Role: !GetAtt IndexDocumentsLambdaRole.Arn
       Code:
         ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}:${ImageTag}"
@@ -405,6 +413,7 @@ Resources:
         Variables:
           APPLICATION_BUCKET: !Ref ApplicationBucket
           ENVIRONMENT_NAME: !Ref Environment
+          EVENT_BUS_NAME: !Sub "just-my-links--events--${Environment}"
 
   # API Gateway HTTP API
   DocumentStorageHttpApi:

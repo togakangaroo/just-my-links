@@ -61,9 +61,10 @@ Client → API Gateway → store-document Lambda
 # Key Technical Notes
 
 - Both Lambda functions use `aws-lambda-powertools` for structured logging, tracing (X-Ray), and metrics. The `@cache` decorator on env-var getters exploits Lambda container reuse for efficient Secrets Manager access.
-- The `MultipartParser` from `python-multipart` uses a callback-based streaming API. 
+- The `MultipartParser` from `python-multipart` uses a callback-based streaming API.
 - CloudFormation parameters per environment live in `cloudformation/parameters/<env>.env`.
-
+- When using localstack use awslocal cli and unset the AWS_PROFILE variable beforehand
+- For any operations against actual aws the user will take care of logging in, but all operations should be run with the AWS_PROFILE=just-my-links
 
 # Instructions on using beads for memory
 
@@ -104,4 +105,3 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-

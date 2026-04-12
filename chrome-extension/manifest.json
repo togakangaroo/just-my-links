@@ -4,6 +4,7 @@
   "version": "1.0",
   "description": "Save pages to your Just My Links archive",
   "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["https://*.amazonaws.com/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Save to Just My Links"

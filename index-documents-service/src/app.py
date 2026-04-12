@@ -25,8 +25,8 @@ def process_sqs_record(record: Dict[str, Any]) -> None:
         # Parse the SQS message body
         message_body = json.loads(record['body'])
 
-        # Extract EventBridge event details
-        event_detail = json.loads(message_body.get('detail', '{}'))
+        # Extract EventBridge event details (detail is already a dict after json.loads above)
+        event_detail = message_body.get('detail', {})
         folder_path = event_detail.get('folderPath')
         document_url = event_detail.get('documentUrl')
 

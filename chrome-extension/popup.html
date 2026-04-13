@@ -83,16 +83,21 @@
       overflow: hidden;
     }
 
-    .title-text {
-      font-size: 13px;
-      font-weight: 500;
-      color: #333;
-      margin-top: 10px;
+    #doc-title {
+      width: 100%;
+      margin-top: 8px;
       margin-bottom: 12px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      padding: 6px 10px;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #333;
+      outline: none;
+      transition: border-color 0.15s;
     }
+
+    #doc-title:focus { border-color: #1a1a2e; }
 
     #save-btn {
       width: 100%;
@@ -257,7 +262,7 @@
     <div id="panel-save" class="panel active">
       <div class="content">
         <div class="url-box" id="current-url">Loading...</div>
-        <div class="title-text" id="current-title"></div>
+        <input type="text" id="doc-title" placeholder="Title (optional)">
         <button id="save-btn">Save Page</button>
         <div class="status" id="status"></div>
       </div>

@@ -109,6 +109,8 @@ def _open_db() -> sqlite3.Connection:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+    # Ensure documents table exists for older indexes that predate title support
+    conn.execute("CREATE TABLE IF NOT EXISTS documents (url TEXT PRIMARY KEY, title TEXT)")
     return conn
 
 
@@ -140,9 +142,10 @@ def search_index(conn: sqlite3.Connection, embedding: list[float], top_k: int) -
     blob = _serialize_embedding(embedding)
     rows = conn.execute(
         """
-        SELECT c.url, v.distance
+        SELECT c.url, v.distance, d.title
         FROM vec_chunks v
         JOIN chunks c ON c.id = v.chunk_id
+        LEFT JOIN documents d ON d.url = c.url
         WHERE v.embedding MATCH ?
           AND k = ?
         ORDER BY v.distance
@@ -150,13 +153,13 @@ def search_index(conn: sqlite3.Connection, embedding: list[float], top_k: int) -
         (blob, top_k * 3),  # over-fetch then deduplicate
     ).fetchall()
 
-    seen: dict[str, float] = {}
-    for url, dist in rows:
-        if url not in seen or dist < seen[url]:
-            seen[url] = dist
+    seen: dict[str, tuple[float, str | None]] = {}
+    for url, dist, title in rows:
+        if url not in seen or dist < seen[url][0]:
+            seen[url] = (dist, title)
 
-    results = sorted(seen.items(), key=lambda x: x[1])[:top_k]
-    return [{"url": url, "distance": dist} for url, dist in results]
+    results = sorted(seen.items(), key=lambda x: x[1][0])[:top_k]
+    return [{"url": url, "distance": dist, "title": title} for url, (dist, title) in results]
 
 
 # ---------------------------------------------------------------------------

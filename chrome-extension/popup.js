@@ -39,7 +39,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 const saveBtn = document.getElementById('save-btn');
 const statusEl = document.getElementById('status');
 const urlEl = document.getElementById('current-url');
-const titleEl = document.getElementById('current-title');
+const titleEl = document.getElementById('doc-title');
 
 function setSaveStatus(message, type) {
   statusEl.textContent = message;
@@ -90,7 +90,11 @@ async function savePage(tab, apiUrl, token) {
   const formData = new FormData();
   formData.append('document', blob, filename);
 
-  const response = await fetch(`${apiUrl}/document?url=${encodeURIComponent(tab.url)}`, {
+  const title = titleEl.value.trim();
+  const params = new URLSearchParams({ url: tab.url });
+  if (title) params.set('title', title);
+
+  const response = await fetch(`${apiUrl}/document?${params}`, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}` },
     body: formData,
@@ -125,15 +129,19 @@ function renderResults(results) {
   }
 
   setSearchStatus('');
-  results.forEach(({ url }) => {
+  results.forEach(({ url, title }) => {
     const item = document.createElement('div');
     item.className = 'result-item';
 
-    let displayTitle = url;
-    try {
-      const parsed = new URL(url);
-      displayTitle = (parsed.hostname + parsed.pathname).replace(/\/$/, '');
-    } catch (_) {}
+    let displayTitle = title;
+    if (!displayTitle) {
+      try {
+        const parsed = new URL(url);
+        displayTitle = (parsed.hostname + parsed.pathname).replace(/\/$/, '');
+      } catch (_) {
+        displayTitle = url;
+      }
+    }
 
     item.innerHTML = `
       <div class="result-title">${escapeHtml(displayTitle)}</div>
@@ -191,7 +199,7 @@ async function init() {
   // Save tab setup
   const tab = await getCurrentTab();
   urlEl.textContent = tab.url;
-  titleEl.textContent = tab.title || '';
+  titleEl.value = tab.title || '';
 
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;

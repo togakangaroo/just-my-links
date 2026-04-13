@@ -55,6 +55,8 @@ def open_db(path: Path) -> sqlite3.Connection:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+    # Ensure documents table exists for older indexes that predate title support
+    conn.execute("CREATE TABLE IF NOT EXISTS documents (url TEXT PRIMARY KEY, title TEXT)")
     return conn
 
 
@@ -74,14 +76,15 @@ def serialize_embedding(embedding: list[float]) -> bytes:
     return struct.pack(f"{len(embedding)}f", *embedding)
 
 
-def search(conn: sqlite3.Connection, embedding: list[float], top_k: int) -> list[tuple[str, float]]:
-    """Return [(url, distance), ...] ordered by ascending distance (closer = better)."""
+def search(conn: sqlite3.Connection, embedding: list[float], top_k: int) -> list[tuple[str, float, str | None]]:
+    """Return [(url, distance, title), ...] ordered by ascending distance (closer = better)."""
     blob = serialize_embedding(embedding)
     rows = conn.execute(
         """
-        SELECT c.url, v.distance
+        SELECT c.url, v.distance, d.title
         FROM vec_chunks v
         JOIN chunks c ON c.id = v.chunk_id
+        LEFT JOIN documents d ON d.url = c.url
         WHERE v.embedding MATCH ?
           AND k = ?
         ORDER BY v.distance
@@ -90,13 +93,13 @@ def search(conn: sqlite3.Connection, embedding: list[float], top_k: int) -> list
     ).fetchall()
 
     # Deduplicate: keep best (lowest) distance per URL
-    seen: dict[str, float] = {}
-    for url, dist in rows:
-        if url not in seen or dist < seen[url]:
-            seen[url] = dist
+    seen: dict[str, tuple[float, str | None]] = {}
+    for url, dist, title in rows:
+        if url not in seen or dist < seen[url][0]:
+            seen[url] = (dist, title)
 
-    results = sorted(seen.items(), key=lambda x: x[1])
-    return results[:top_k]
+    results = sorted(seen.items(), key=lambda x: x[1][0])
+    return [(url, dist, title) for url, (dist, title) in results[:top_k]]
 
 
 def main() -> None:
@@ -134,10 +137,14 @@ def main() -> None:
         return
 
     print(f"\nTop {len(results)} results for: {args.query!r}\n")
-    for i, (url, dist) in enumerate(results, 1):
+    for i, (url, dist, title) in enumerate(results, 1):
         # sqlite-vec returns L2 distance for float vectors; lower = more similar
         score = 1 / (1 + dist)  # convert to a 0–1 similarity-ish score
-        print(f"  {i}. {url}")
+        if title:
+            print(f"  {i}. {title}")
+            print(f"     {url}")
+        else:
+            print(f"  {i}. {url}")
         print(f"     similarity: {score:.4f}  (distance: {dist:.4f})")
 
 

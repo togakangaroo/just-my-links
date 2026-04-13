@@ -241,3 +241,70 @@ def test_upsert_different_urls_coexist(app_module, tmp_path, monkeypatch):
 
     assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 3
     conn.close()
+
+
+def test_upsert_stores_title(app_module, tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setattr("app.VECTOR_DB_LOCAL_PATH", db_path)
+
+    counter = [0]
+
+    def fake_embed(text):
+        counter[0] += 1
+        return _make_fake_embedding(counter[0])
+
+    monkeypatch.setattr("app.embed_text", fake_embed)
+
+    conn = _open_test_db(db_path, app_module)
+    app_module.upsert_document(conn, "https://example.com/a", ["chunk"], title="My Title")
+    conn.commit()
+
+    row = conn.execute("SELECT title FROM documents WHERE url = ?", ("https://example.com/a",)).fetchone()
+    assert row is not None
+    assert row[0] == "My Title"
+    conn.close()
+
+
+def test_upsert_title_none_stored_as_null(app_module, tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setattr("app.VECTOR_DB_LOCAL_PATH", db_path)
+
+    counter = [0]
+
+    def fake_embed(text):
+        counter[0] += 1
+        return _make_fake_embedding(counter[0])
+
+    monkeypatch.setattr("app.embed_text", fake_embed)
+
+    conn = _open_test_db(db_path, app_module)
+    app_module.upsert_document(conn, "https://example.com/a", ["chunk"])
+    conn.commit()
+
+    row = conn.execute("SELECT title FROM documents WHERE url = ?", ("https://example.com/a",)).fetchone()
+    assert row is not None
+    assert row[0] is None
+    conn.close()
+
+
+def test_upsert_updates_title_on_reindex(app_module, tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setattr("app.VECTOR_DB_LOCAL_PATH", db_path)
+
+    counter = [0]
+
+    def fake_embed(text):
+        counter[0] += 1
+        return _make_fake_embedding(counter[0])
+
+    monkeypatch.setattr("app.embed_text", fake_embed)
+
+    conn = _open_test_db(db_path, app_module)
+    app_module.upsert_document(conn, "https://example.com/a", ["chunk"], title="Old Title")
+    conn.commit()
+    app_module.upsert_document(conn, "https://example.com/a", ["chunk"], title="New Title")
+    conn.commit()
+
+    row = conn.execute("SELECT title FROM documents WHERE url = ?", ("https://example.com/a",)).fetchone()
+    assert row[0] == "New Title"
+    conn.close()

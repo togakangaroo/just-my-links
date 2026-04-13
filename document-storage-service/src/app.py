@@ -48,6 +48,7 @@ def store_document():
     # Get document URL from query parameter
     query_params = app.current_event.query_string_parameters or {}
     document_url = query_params.get("url")
+    document_title = query_params.get("title") or None
 
     if not document_url:
         return Response(
@@ -91,6 +92,8 @@ def store_document():
                 {"$date": {"$numberLong": str(int(__import__("time").time() * 1000))}}
             ),
         }
+        if document_title:
+            metadata["title"] = document_title
 
         s3_client.put_object(
             Bucket=application_bucket,

@@ -88,6 +88,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
     """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            url   TEXT PRIMARY KEY,
+            title TEXT
+        )
+    """
+    )
     conn.commit()
 
 
@@ -210,7 +218,7 @@ def embed_text(text: str) -> list[float]:
 
 
 @tracer.capture_method
-def upsert_document(conn: sqlite3.Connection, url: str, chunks: list[str]) -> None:
+def upsert_document(conn: sqlite3.Connection, url: str, chunks: list[str], title: str | None = None) -> None:
     """Delete any existing chunks for this URL then insert fresh embeddings."""
     # Find existing chunk ids so we can remove them from the vec table too
     existing_ids = [
@@ -234,6 +242,11 @@ def upsert_document(conn: sqlite3.Connection, url: str, chunks: list[str]) -> No
             "INSERT INTO vec_chunks (chunk_id, embedding) VALUES (?, ?)",
             (chunk_id, _serialize_embedding(embedding)),
         )
+
+    conn.execute(
+        "INSERT INTO documents (url, title) VALUES (?, ?) ON CONFLICT(url) DO UPDATE SET title = excluded.title",
+        (url, title),
+    )
 
     logger.info(
         "Upserted document chunks", extra={"url": url, "chunk_count": len(chunks)}
@@ -269,6 +282,7 @@ def process_sqs_record(record: dict[str, Any]) -> None:
         s3_client.get_object(Bucket=bucket, Key=metadata_key)["Body"].read()
     )
     entrypoint = metadata["entrypoint"]
+    document_title = metadata.get("title")
     if entrypoint.endswith(".html"):
         content_type = "text/html"
     elif entrypoint.endswith(".pdf"):
@@ -288,7 +302,7 @@ def process_sqs_record(record: dict[str, Any]) -> None:
     )
 
     with sync_vector_db() as conn:
-        upsert_document(conn, document_url, chunks)
+        upsert_document(conn, document_url, chunks, title=document_title)
 
     # Publish "Document indexed" event
     eventbridge_client.put_events(

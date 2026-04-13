@@ -143,6 +143,51 @@ Resources:
             ]
           }
 
+  # ECR Repository for Search Documents Lambda Container
+  SearchDocumentsEcrRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    Properties:
+      RepositoryName: !Sub "just-my-links-ecr-search-documents-${Environment}"
+      ImageTagMutability: MUTABLE
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaECRImageRetrievalPolicy
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              StringLike:
+                aws:sourceArn: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          - Sid: AllowAdminAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - ecr:*
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 2 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 2
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
   # S3 Bucket for all application data
   ApplicationBucket:
     Type: AWS::S3::Bucket
@@ -464,7 +509,7 @@ Resources:
       Description: "Just My Links - semantic search over indexed documents"
       Role: !GetAtt SearchDocumentsLambdaRole.Arn
       Code:
-        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/just-my-links-ecr-search-documents-${Environment}:${ImageTag}"
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${SearchDocumentsEcrRepository}:${ImageTag}"
       PackageType: Image
       Architectures: [arm64]
       Timeout: 30

@@ -326,6 +326,46 @@ Resources:
                   - !Sub "${ApplicationBucket.Arn}/*"
                   - !GetAtt ApplicationBucket.Arn
 
+  # Search Documents Lambda Execution Role
+  SearchDocumentsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "just-my-links--search-documents-role--${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref AuthTokenSecret
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "${ApplicationBucket.Arn}/vector-index/*"
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+
   # Index Documents Lambda Execution Role
   IndexDocumentsLambdaRole:
     Type: AWS::IAM::Role
@@ -415,6 +455,27 @@ Resources:
           ENVIRONMENT_NAME: !Ref Environment
           EVENT_BUS_NAME: !Sub "just-my-links--events--${Environment}"
 
+  # Search Documents Lambda Function
+  SearchDocumentsFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsNotFirstRunCondition
+    Properties:
+      FunctionName: !Sub "just-my-links--search-documents--${Environment}"
+      Description: "Just My Links - semantic search over indexed documents"
+      Role: !GetAtt SearchDocumentsLambdaRole.Arn
+      Code:
+        ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/just-my-links-ecr-search-documents-${Environment}:${ImageTag}"
+      PackageType: Image
+      Architectures: [arm64]
+      Timeout: 30
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          APPLICATION_BUCKET: !Ref ApplicationBucket
+          ENVIRONMENT_NAME: !Ref Environment
+          BEARER_TOKEN_SECRET_ARN: !Ref AuthTokenSecret
+
   # API Gateway HTTP API
   DocumentStorageHttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -451,6 +512,35 @@ Resources:
       ApiId: !Ref DocumentStorageHttpApi
       RouteKey: "$default"
       Target: !Sub "integrations/${DocumentStorageHttpApiIntegration}"
+
+  # HTTP API Integration for Search Lambda
+  SearchDocumentsHttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: IsNotFirstRunCondition
+    Properties:
+      ApiId: !Ref DocumentStorageHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SearchDocumentsFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+
+  # HTTP API Route for Search - GET /search
+  SearchDocumentsHttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsNotFirstRunCondition
+    Properties:
+      ApiId: !Ref DocumentStorageHttpApi
+      RouteKey: "GET /search"
+      Target: !Sub "integrations/${SearchDocumentsHttpApiIntegration}"
+
+  # Lambda Permission for Search via HTTP API
+  SearchDocumentsHttpApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsNotFirstRunCondition
+    Properties:
+      FunctionName: !Ref SearchDocumentsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DocumentStorageHttpApi}/*/*"
 
   # HTTP API Stage
   DocumentStorageHttpApiStage:
@@ -503,6 +593,11 @@ Outputs:
     Value: !Ref ApplicationBucket
     Export:
       Name: !Sub "just-my-links--application-bucket--${Environment}"
+
+  SearchDocumentsFunctionArn:
+    Condition: IsNotFirstRunCondition
+    Description: Search Documents Lambda function ARN
+    Value: !GetAtt SearchDocumentsFunction.Arn
 
   StoreDocumentFunctionArn:
     Condition: IsNotFirstRunCondition

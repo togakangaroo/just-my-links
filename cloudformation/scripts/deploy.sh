@@ -22,6 +22,7 @@ AWS_REGION=$(aws configure get region || echo "us-east-1")
 
 STORE_DOCUMENT_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/just-my-links-ecr-store-document-${ENVIRONMENT}"
 INDEX_DOCUMENTS_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/just-my-links-ecr-index-documents-${ENVIRONMENT}"
+SEARCH_DOCUMENTS_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/just-my-links-ecr-search-documents-${ENVIRONMENT}"
 
 echo "Authenticating Docker to ECR..."
 aws ecr get-login-password --region "$AWS_REGION" \
@@ -38,9 +39,14 @@ echo "Building index-documents-service image..."
 docker build -t "index-documents-service:${IMAGE_TAG}" "${REPO_ROOT}/index-documents-service"
 docker tag "index-documents-service:${IMAGE_TAG}" "${INDEX_DOCUMENTS_REPO}:${IMAGE_TAG}"
 
+echo "Building search-documents-service image..."
+docker build -t "search-documents-service:${IMAGE_TAG}" "${REPO_ROOT}/search-documents-service"
+docker tag "search-documents-service:${IMAGE_TAG}" "${SEARCH_DOCUMENTS_REPO}:${IMAGE_TAG}"
+
 echo "Pushing images to ECR..."
 docker push "${STORE_DOCUMENT_REPO}:${IMAGE_TAG}"
 docker push "${INDEX_DOCUMENTS_REPO}:${IMAGE_TAG}"
+docker push "${SEARCH_DOCUMENTS_REPO}:${IMAGE_TAG}"
 
 # --- CloudFormation deploy ---
 PARAMS=$(cat "parameters/${ENVIRONMENT}.env" | tr '\n' ' ')

@@ -77,6 +77,22 @@ def test_extract_text_passthrough_for_plain(app_module):
     assert app_module.extract_text(text, "text/plain") == text
 
 
+def test_extract_text_extracts_pdf(app_module):
+    """extract_text should pull text out of a PDF byte stream."""
+    import io
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    buf = io.BytesIO()
+    writer.write(buf)
+    pdf_bytes = buf.getvalue()
+
+    # A blank page has no text; just verify it doesn't crash and returns a string.
+    result = app_module.extract_text(pdf_bytes, "application/pdf")
+    assert isinstance(result, str)
+
+
 # ---------------------------------------------------------------------------
 # chunk_text
 # ---------------------------------------------------------------------------

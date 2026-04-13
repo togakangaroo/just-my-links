@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import struct
@@ -16,6 +17,7 @@ from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 
 logger = Logger(level=os.getenv("LOG_LEVEL", "INFO"))
 tracer = Tracer()
@@ -124,14 +126,20 @@ def sync_vector_db() -> Generator[sqlite3.Connection, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def extract_text(content: str, content_type: str) -> str:
-    """Strip HTML to plain text, or return as-is for plain text documents."""
+def extract_text(content: bytes | str, content_type: str) -> str:
+    """Extract plain text from HTML, plain text, or PDF content."""
+    if content_type == "application/pdf":
+        raw = content if isinstance(content, bytes) else content.encode("latin-1")
+        reader = PdfReader(io.BytesIO(raw))
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n\n".join(p for p in pages if p.strip())
+    text = content.decode("utf-8") if isinstance(content, bytes) else content
     if "html" in content_type:
-        soup = BeautifulSoup(content, "html.parser")
+        soup = BeautifulSoup(text, "html.parser")
         for tag in soup(["script", "style", "head", "nav", "footer"]):
             tag.decompose()
         return soup.get_text(separator="\n\n")
-    return content
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -261,16 +269,19 @@ def process_sqs_record(record: dict[str, Any]) -> None:
         s3_client.get_object(Bucket=bucket, Key=metadata_key)["Body"].read()
     )
     entrypoint = metadata["entrypoint"]
-    content_type = "text/html" if entrypoint.endswith(".html") else "text/plain"
+    if entrypoint.endswith(".html"):
+        content_type = "text/html"
+    elif entrypoint.endswith(".pdf"):
+        content_type = "application/pdf"
+    else:
+        content_type = "text/plain"
 
     # Read the document content
     doc_key = f"{folder_path}/{entrypoint}"
-    content = (
-        s3_client.get_object(Bucket=bucket, Key=doc_key)["Body"].read().decode("utf-8")
-    )
+    raw_content = s3_client.get_object(Bucket=bucket, Key=doc_key)["Body"].read()
 
     # Extract, chunk, embed, store
-    text = extract_text(content, content_type)
+    text = extract_text(raw_content, content_type)
     chunks = chunk_text(text)
     logger.info(
         "Chunked document", extra={"url": document_url, "chunk_count": len(chunks)}

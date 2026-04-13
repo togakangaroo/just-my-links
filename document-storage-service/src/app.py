@@ -73,14 +73,14 @@ def store_document():
                 body={"error": e.message},
             )
 
-        allowed_entrypoints = ("document.html", "document.txt")
+        allowed_entrypoints = ("document.html", "document.txt", "document.pdf")
         entrypoint = next((x for x in uploaded_files if x in allowed_entrypoints), None)
         if not entrypoint:
             return Response(
                 status_code=400,
                 content_type=content_types.APPLICATION_JSON,
                 body={
-                    "error": "No document.html or document.txt file was successfully uploaded"
+                    "error": "No document.html, document.txt, or document.pdf file was successfully uploaded"
                 },
             )
         metadata = {
@@ -279,6 +279,7 @@ def _ensure_document_headers_are_valid(
     acceptable_types = [
         "text/plain",
         "text/html",
+        "application/pdf",
     ]
 
     if content_type not in acceptable_types:
@@ -312,7 +313,7 @@ def _stream_multipart_to_s3(
     application_bucket, documents_folder = get_documents_folder()
     document_folder = f"{documents_folder}/{s3_folder_name}"
 
-    MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
+    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
     request_body = event.body
     content_type_header = getattr(event, "headers", {}).get("content-type", "")
     content_type, options = parse_options_header(content_type_header)
@@ -445,7 +446,7 @@ def _stream_multipart_to_s3(
             f"Document file is too large. Maximum allowed size is {MAX_FILE_SIZE // (1024 * 1024)}MB."
         )
 
-    if not any(f in ("document.html", "document.txt") for f in uploaded_files):
+    if not any(f in ("document.html", "document.txt", "document.pdf") for f in uploaded_files):
         raise MultipartParsingError("Missing required 'document' part")
 
     logger.debug(

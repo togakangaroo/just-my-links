@@ -59,10 +59,36 @@ async function getPageHtml(tabId) {
   return results[0]?.result ?? '';
 }
 
-async function savePage(tab, apiUrl, token) {
+async function isPdfPage(tab) {
+  // Check URL for .pdf extension (with optional query string / fragment)
+  if (/\.pdf(\?|#|$)/i.test(tab.url)) return true;
+  // Check if Chrome rendered its built-in PDF viewer
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => !!document.querySelector('embed[type="application/pdf"]'),
+    });
+    return results[0]?.result ?? false;
+  } catch {
+    return false;
+  }
+}
+
+async function getPageContent(tab) {
+  if (await isPdfPage(tab)) {
+    const response = await fetch(tab.url);
+    if (!response.ok) throw new Error(`Failed to fetch PDF: HTTP ${response.status}`);
+    const blob = await response.blob();
+    return { blob, filename: 'document.pdf' };
+  }
   const html = await getPageHtml(tab.id);
+  return { blob: new Blob([html], { type: 'text/html' }), filename: 'document.html' };
+}
+
+async function savePage(tab, apiUrl, token) {
+  const { blob, filename } = await getPageContent(tab);
   const formData = new FormData();
-  formData.append('document', new Blob([html], { type: 'text/html' }), 'document.html');
+  formData.append('document', blob, filename);
 
   const response = await fetch(`${apiUrl}/document?url=${encodeURIComponent(tab.url)}`, {
     method: 'PUT',

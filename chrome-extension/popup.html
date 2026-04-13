@@ -8,7 +8,7 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
-      width: 320px;
+      width: 340px;
       background: #fff;
       color: #1a1a1a;
     }
@@ -34,6 +34,37 @@
       opacity: 0.9;
     }
 
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #e8e8e8;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 9px 0;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      font-size: 13px;
+      font-weight: 500;
+      color: #888;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .tab-btn.active {
+      color: #1a1a2e;
+      border-bottom-color: #1a1a2e;
+    }
+
+    .tab-btn:hover:not(.active) { color: #444; }
+
+    /* Panels */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* Save panel */
     .content {
       padding: 16px;
     }
@@ -50,7 +81,6 @@
       min-height: 36px;
       max-height: 60px;
       overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .title-text {
@@ -77,14 +107,8 @@
       transition: background 0.15s;
     }
 
-    #save-btn:hover:not(:disabled) {
-      background: #2d2d54;
-    }
-
-    #save-btn:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
+    #save-btn:hover:not(:disabled) { background: #2d2d54; }
+    #save-btn:disabled { opacity: 0.6; cursor: default; }
 
     .status {
       margin-top: 10px;
@@ -96,6 +120,102 @@
     .status.saving { color: #666; }
     .status.success { color: #2e7d32; font-weight: 500; }
     .status.error { color: #c62828; }
+
+    /* Search panel */
+    .search-content {
+      padding: 12px 16px 0;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    #search-input {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #search-input:focus { border-color: #1a1a2e; }
+
+    #search-btn {
+      padding: 8px 12px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    #search-btn:hover:not(:disabled) { background: #2d2d54; }
+    #search-btn:disabled { opacity: 0.6; cursor: default; }
+
+    .search-status {
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+      padding: 10px 0 6px;
+      min-height: 30px;
+    }
+
+    .search-status.error { color: #c62828; }
+
+    .results {
+      max-height: 240px;
+      overflow-y: auto;
+      border-top: 1px solid #f0f0f0;
+      margin-top: 4px;
+    }
+
+    .result-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid #f5f5f5;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .result-item:last-child { border-bottom: none; }
+    .result-item:hover { background: #f9f9f9; }
+
+    .result-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: #1a1a2e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .result-url {
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Not configured */
+    .not-configured {
+      padding: 16px;
+      text-align: center;
+      color: #666;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .not-configured a {
+      color: #1a1a2e;
+      font-weight: 500;
+    }
 
     footer {
       border-top: 1px solid #f0f0f0;
@@ -110,19 +230,6 @@
     }
 
     footer a:hover { color: #555; text-decoration: underline; }
-
-    .not-configured {
-      padding: 16px;
-      text-align: center;
-      color: #666;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .not-configured a {
-      color: #1a1a2e;
-      font-weight: 500;
-    }
   </style>
 </head>
 <body>
@@ -134,18 +241,38 @@
     <h1>Just My Links</h1>
   </header>
 
-  <div id="main">
-    <div class="content">
-      <div class="url-box" id="current-url">Loading...</div>
-      <div class="title-text" id="current-title"></div>
-      <button id="save-btn">Save Page</button>
-      <div class="status" id="status"></div>
-    </div>
-  </div>
-
   <div id="not-configured" style="display:none">
     <div class="not-configured">
       Configure your API URL and token in <a href="#" id="open-options">Settings</a> first.
+    </div>
+  </div>
+
+  <div id="configured" style="display:none">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="save">Save</button>
+      <button class="tab-btn" data-tab="search">Search</button>
+    </div>
+
+    <!-- Save panel -->
+    <div id="panel-save" class="panel active">
+      <div class="content">
+        <div class="url-box" id="current-url">Loading...</div>
+        <div class="title-text" id="current-title"></div>
+        <button id="save-btn">Save Page</button>
+        <div class="status" id="status"></div>
+      </div>
+    </div>
+
+    <!-- Search panel -->
+    <div id="panel-search" class="panel">
+      <div class="search-content">
+        <div class="search-row">
+          <input type="text" id="search-input" placeholder="Search your links…" autocomplete="off">
+          <button id="search-btn">Search</button>
+        </div>
+        <div class="search-status" id="search-status"></div>
+      </div>
+      <div class="results" id="results"></div>
     </div>
   </div>
 

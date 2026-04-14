@@ -1,4 +1,6 @@
 <!-- This file is auto-generated from README.ipynb. DO NOT MODIFY IT DIRECTLY. -->
+Note that [README.ipynb](./README.ipynb) is the official README. The adjacent [README.md](./README.md) file is auto-generated from this one by a pre-commit hook.
+
 A self-hosted [Pocket](https://getpocket.com/) replacement built on AWS. Save pages from a Chrome extension, search them later with semantic search.
 
 ![Screenshot of saving a link via chrome extension](./docs/chrome-extension-screenshot-save.png "Save via chrome extension")
@@ -35,7 +37,6 @@ After cloning, install the git hooks:
 ```
 
 ## Running the Notebook
-
 
 Start the Jupyter server from this folder:
 

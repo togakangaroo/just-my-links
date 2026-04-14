@@ -1,6 +1,10 @@
 <!-- This file is auto-generated from README.ipynb. DO NOT MODIFY IT DIRECTLY. -->
 A self-hosted [Pocket](https://getpocket.com/) replacement built on AWS. Save pages from a Chrome extension, search them later with semantic search.
 
+![Screenshot of saving a link via chrome extension](./docs/chrome-extension-screenshot-save.png "Save via chrome extension")
+
+![Screenshot of searching via chrome extension](./docs/chrome-extension-screenshot-search.png "Search via chrome extension")
+
 # Goals
 
 - Chrome extension to save any page (HTML or PDF)

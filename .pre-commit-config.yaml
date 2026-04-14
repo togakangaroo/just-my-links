@@ -1,0 +1,21 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.391
+    hooks:
+      - id: pyright
+
+  - repo: local
+    hooks:
+      - id: export-readme-md
+        name: Export README.ipynb to Markdown
+        entry: uv run scripts/generate_markdown_readme.py
+        language: system
+        files: ^README\.(ipynb|md)$
+        pass_filenames: false

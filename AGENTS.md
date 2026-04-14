@@ -13,11 +13,9 @@ uv sync --locked
 # Run tests
 uv run pytest
 
-# Format code
-uv run black .
-
-# Lint
-uv run ruff check .
+# Format + lint (auto-fix)
+uv run ruff format .
+uv run ruff check --fix .
 ```
 
 # Deployment

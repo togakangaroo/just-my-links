@@ -32,7 +32,7 @@ metrics = Metrics(namespace="just-my-links")
 app = APIGatewayHttpResolver()
 
 # Initialize AWS clients
-secrets_client = boto3.client("secretsmanager")
+ssm_client = boto3.client("ssm")
 s3_client = boto3.client("s3")
 eventbridge_client = boto3.client("events")
 
@@ -449,7 +449,9 @@ def _stream_multipart_to_s3(
             f"Document file is too large. Maximum allowed size is {MAX_FILE_SIZE // (1024 * 1024)}MB."
         )
 
-    if not any(f in ("document.html", "document.txt", "document.pdf") for f in uploaded_files):
+    if not any(
+        f in ("document.html", "document.txt", "document.pdf") for f in uploaded_files
+    ):
         raise MultipartParsingError("Missing required 'document' part")
 
     logger.debug(
@@ -466,24 +468,24 @@ def _stream_multipart_to_s3(
 
 @cache
 def get_bearer_token() -> str:
-    """Get bearer token from Secrets Manager with caching"""
-    secret_arn = os.getenv("BEARER_TOKEN_SECRET_ARN")
+    """Get bearer token from SSM Parameter Store with caching"""
+    param_name = os.getenv("BEARER_TOKEN_PARAM_NAME")
     logger.debug(
-        "Will fetch token from Secrets Manager", extra={"secret_arn": secret_arn}
+        "Will fetch token from SSM Parameter Store", extra={"param_name": param_name}
     )
 
-    if not secret_arn:
-        logger.error("BEARER_TOKEN_SECRET_ARN environment variable not set")
-        raise ValueError("BEARER_TOKEN_SECRET_ARN environment variable not set")
+    if not param_name:
+        logger.error("BEARER_TOKEN_PARAM_NAME environment variable not set")
+        raise ValueError("BEARER_TOKEN_PARAM_NAME environment variable not set")
 
     try:
-        response = secrets_client.get_secret_value(SecretId=secret_arn)
-        logger.debug("Bearer token retrieved from Secrets Manager")
-        return response["SecretString"]
+        response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+        logger.debug("Bearer token retrieved from SSM Parameter Store")
+        return response["Parameter"]["Value"]
     except Exception as e:
         logger.error(
             "Failed to retrieve bearer token",
-            extra={"error": str(e), "secret_arn": secret_arn},
+            extra={"error": str(e), "param_name": param_name},
         )
         raise
 

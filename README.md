@@ -93,9 +93,10 @@ Run the cells below to fetch the API URL and bearer token for the `dev` environm
 
 
 ```python
-!AWS_PROFILE=just-my-links aws secretsmanager get-secret-value \
-    --secret-id just-my-links--auth-token--dev \
-    --query SecretString \
+!AWS_PROFILE=just-my-links aws ssm get-parameter \
+    --name /just-my-links/auth-token/dev \
+    --with-decryption \
+    --query Parameter.Value \
     --output text
 ```
 
@@ -168,7 +169,7 @@ Set your API URL and token once, then run the cells below.
 ```python
 import subprocess
 
-# Fetch the API URL from CloudFormation and token from Secrets Manager
+# Fetch the API URL from CloudFormation and token from SSM Parameter Store
 API_URL = subprocess.check_output(
     "AWS_PROFILE=just-my-links aws cloudformation describe-stacks "
     "--stack-name just-my-links-dev "
@@ -179,9 +180,10 @@ API_URL = subprocess.check_output(
 ).strip()
 
 TOKEN = subprocess.check_output(
-    "AWS_PROFILE=just-my-links aws secretsmanager get-secret-value "
-    "--secret-id just-my-links--auth-token--dev "
-    "--query SecretString --output text",
+    "AWS_PROFILE=just-my-links aws ssm get-parameter "
+    "--name /just-my-links/auth-token/dev "
+    "--with-decryption "
+    "--query Parameter.Value --output text",
     shell=True,
     text=True,
 ).strip()

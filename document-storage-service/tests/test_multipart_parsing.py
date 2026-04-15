@@ -65,16 +65,16 @@ def mock_aws(monkeypatch):
 
     monkeypatch.setenv("APPLICATION_BUCKET", "test-bucket")
     monkeypatch.setenv("EVENT_BUS_NAME", "test-bus")
-    monkeypatch.setenv(
-        "BEARER_TOKEN_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:123:secret:test"
-    )
+    monkeypatch.setenv("BEARER_TOKEN_PARAM_NAME", "/just-my-links/auth-token/test")
 
-    with (patch("boto3.client") as mock_boto3_client,):
+    with (
+        patch("boto3.client") as mock_boto3_client,
+    ):
 
         def client_factory(service, **kwargs):
             if service == "s3":
                 return mock_s3
-            elif service == "secretsmanager":
+            elif service == "ssm":
                 return mock_secrets
             elif service == "events":
                 return mock_eventbridge

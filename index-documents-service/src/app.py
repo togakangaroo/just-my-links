@@ -4,7 +4,7 @@ import os
 import struct
 
 try:
-    import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension
+    import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension  # pyright: ignore[reportMissingImports]
 except ImportError:
     import sqlite3  # type: ignore[no-redef]
 from contextlib import contextmanager
@@ -218,7 +218,9 @@ def embed_text(text: str) -> list[float]:
 
 
 @tracer.capture_method
-def upsert_document(conn: sqlite3.Connection, url: str, chunks: list[str], title: str | None = None) -> None:
+def upsert_document(
+    conn: sqlite3.Connection, url: str, chunks: list[str], title: str | None = None
+) -> None:
     """Delete any existing chunks for this URL then insert fresh embeddings."""
     # Find existing chunk ids so we can remove them from the vec table too
     existing_ids = [

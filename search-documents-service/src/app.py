@@ -5,7 +5,7 @@ import struct
 import time
 
 try:
-    import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension
+    import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension  # pyright: ignore[reportMissingImports]
 except ImportError:
     import sqlite3  # type: ignore[no-redef]
 from functools import cache
@@ -14,7 +14,11 @@ from typing import Any, Dict
 import boto3
 import sqlite_vec
 from aws_lambda_powertools import Logger, Metrics, Tracer
-from aws_lambda_powertools.event_handler import APIGatewayHttpResolver, Response, content_types
+from aws_lambda_powertools.event_handler import (
+    APIGatewayHttpResolver,
+    Response,
+    content_types,
+)
 from aws_lambda_powertools.event_handler.middlewares import NextMiddleware
 from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.metrics import MetricUnit
@@ -25,7 +29,7 @@ tracer = Tracer()
 metrics = Metrics(namespace="just-my-links")
 app = APIGatewayHttpResolver()
 
-secrets_client = boto3.client("secretsmanager")
+ssm_client = boto3.client("ssm")
 s3_client = boto3.client("s3")
 bedrock_client = boto3.client("bedrock-runtime")
 
@@ -52,10 +56,10 @@ def get_application_bucket() -> str:
 
 @cache
 def get_bearer_token() -> str:
-    secret_arn = os.getenv("BEARER_TOKEN_SECRET_ARN")
-    assert secret_arn, "BEARER_TOKEN_SECRET_ARN environment variable not set"
-    response = secrets_client.get_secret_value(SecretId=secret_arn)
-    return response["SecretString"]
+    param_name = os.getenv("BEARER_TOKEN_PARAM_NAME")
+    assert param_name, "BEARER_TOKEN_PARAM_NAME environment variable not set"
+    response = ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+    return response["Parameter"]["Value"]
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,9 @@ def _unauthorized() -> Response:
     )
 
 
-def authentication_middleware(app: APIGatewayHttpResolver, next_middleware: NextMiddleware) -> Response:
+def authentication_middleware(
+    app: APIGatewayHttpResolver, next_middleware: NextMiddleware
+) -> Response:
     headers = getattr(app.current_event, "headers", None) or {}
     auth_header = headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -95,8 +101,13 @@ def _ensure_index_fresh() -> None:
     """Download index.db from S3 if missing or stale (TTL-based)."""
     global _index_last_downloaded
     now = time.monotonic()
-    if os.path.exists(VECTOR_DB_LOCAL_PATH) and (now - _index_last_downloaded) < INDEX_CACHE_TTL_SECONDS:
-        logger.debug("Using cached index", extra={"age_seconds": now - _index_last_downloaded})
+    if (
+        os.path.exists(VECTOR_DB_LOCAL_PATH)
+        and (now - _index_last_downloaded) < INDEX_CACHE_TTL_SECONDS
+    ):
+        logger.debug(
+            "Using cached index", extra={"age_seconds": now - _index_last_downloaded}
+        )
         return
     bucket = get_application_bucket()
     logger.info("Downloading vector index from S3")
@@ -110,7 +121,9 @@ def _open_db() -> sqlite3.Connection:
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     # Ensure documents table exists for older indexes that predate title support
-    conn.execute("CREATE TABLE IF NOT EXISTS documents (url TEXT PRIMARY KEY, title TEXT)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS documents (url TEXT PRIMARY KEY, title TEXT)"
+    )
     return conn
 
 
@@ -127,17 +140,21 @@ def _serialize_embedding(embedding: list[float]) -> bytes:
 def embed_query(text: str) -> list[float]:
     response = bedrock_client.invoke_model(
         modelId=BEDROCK_MODEL_ID,
-        body=json.dumps({
-            "inputText": text,
-            "dimensions": EMBEDDING_DIMENSIONS,
-            "normalize": True,
-        }),
+        body=json.dumps(
+            {
+                "inputText": text,
+                "dimensions": EMBEDDING_DIMENSIONS,
+                "normalize": True,
+            }
+        ),
     )
     return json.loads(response["body"].read())["embedding"]
 
 
 @tracer.capture_method
-def search_index(conn: sqlite3.Connection, embedding: list[float], top_k: int) -> list[dict]:
+def search_index(
+    conn: sqlite3.Connection, embedding: list[float], top_k: int
+) -> list[dict]:
     """KNN search; deduplicate by URL keeping best (lowest) distance per document."""
     blob = _serialize_embedding(embedding)
     rows = conn.execute(
@@ -159,7 +176,9 @@ def search_index(conn: sqlite3.Connection, embedding: list[float], top_k: int) -
             seen[url] = (dist, title)
 
     results = sorted(seen.items(), key=lambda x: x[1][0])[:top_k]
-    return [{"url": url, "distance": dist, "title": title} for url, (dist, title) in results]
+    return [
+        {"url": url, "distance": dist, "title": title} for url, (dist, title) in results
+    ]
 
 
 # ---------------------------------------------------------------------------

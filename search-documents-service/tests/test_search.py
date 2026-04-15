@@ -50,7 +50,9 @@ def _open_test_db(path: str) -> sqlite3.Connection:
     return conn
 
 
-def _insert_chunk(conn: sqlite3.Connection, url: str, chunk_index: int, embedding: list[float]) -> None:
+def _insert_chunk(
+    conn: sqlite3.Connection, url: str, chunk_index: int, embedding: list[float]
+) -> None:
     cur = conn.execute(
         "INSERT INTO chunks (url, chunk_index, chunk_text) VALUES (?, ?, ?)",
         (url, chunk_index, "test chunk"),
@@ -65,7 +67,7 @@ def _insert_chunk(conn: sqlite3.Connection, url: str, chunk_index: int, embeddin
 @pytest.fixture
 def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("APPLICATION_BUCKET", "test-bucket")
-    monkeypatch.setenv("BEARER_TOKEN_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:123:secret:test")
+    monkeypatch.setenv("BEARER_TOKEN_PARAM_NAME", "/just-my-links/auth-token/test")
     sys.modules.pop("app", None)
 
     mock_s3 = MagicMock()
@@ -75,7 +77,7 @@ def app_module(monkeypatch, tmp_path):
     def client_factory(service, **kwargs):
         if service == "s3":
             return mock_s3
-        elif service == "secretsmanager":
+        elif service == "ssm":
             return mock_secrets
         elif service == "bedrock-runtime":
             return mock_bedrock

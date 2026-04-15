@@ -6,13 +6,29 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.391
-    hooks:
-      - id: pyright
-
   - repo: local
     hooks:
+      - id: pyright-document-storage-service
+        name: Pyright (document-storage-service)
+        entry: bash -c 'cd document-storage-service && uvx pyright'
+        language: system
+        files: ^document-storage-service/.*\.py$
+        pass_filenames: false
+
+      - id: pyright-index-documents-service
+        name: Pyright (index-documents-service)
+        entry: bash -c 'cd index-documents-service && uvx pyright'
+        language: system
+        files: ^index-documents-service/.*\.py$
+        pass_filenames: false
+
+      - id: pyright-search-documents-service
+        name: Pyright (search-documents-service)
+        entry: bash -c 'cd search-documents-service && uvx pyright'
+        language: system
+        files: ^search-documents-service/.*\.py$
+        pass_filenames: false
+
       - id: export-readme-md
         name: Export README.ipynb to Markdown
         entry: uv run scripts/generate_markdown_readme.py

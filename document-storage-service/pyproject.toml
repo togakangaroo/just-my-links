@@ -19,6 +19,12 @@ packages = ["src/app"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+exclude = [".venv/**"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",

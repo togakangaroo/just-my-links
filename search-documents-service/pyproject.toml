@@ -20,6 +20,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/app"]
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+exclude = [".venv/**"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.0.0",

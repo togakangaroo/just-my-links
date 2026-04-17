@@ -201,7 +201,8 @@ async function init() {
   urlEl.textContent = tab.url;
   titleEl.value = tab.title || '';
 
-  saveBtn.addEventListener('click', async () => {
+  document.getElementById('save-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
     saveBtn.disabled = true;
     setSaveStatus('Saving…', 'saving');
     try {
@@ -215,9 +216,9 @@ async function init() {
   });
 
   // Search tab setup
-  searchBtn.addEventListener('click', () => doSearch(apiUrl, bearerToken));
-  searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doSearch(apiUrl, bearerToken);
+  document.getElementById('search-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    doSearch(apiUrl, bearerToken);
   });
 }
 

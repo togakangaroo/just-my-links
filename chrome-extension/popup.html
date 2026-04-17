@@ -260,23 +260,23 @@
 
     <!-- Save panel -->
     <div id="panel-save" class="panel active">
-      <div class="content">
+      <form class="content" id="save-form">
         <div class="url-box" id="current-url">Loading...</div>
         <input type="text" id="doc-title" placeholder="Title (optional)">
-        <button id="save-btn">Save Page</button>
+        <button type="submit" id="save-btn">Save Page</button>
         <div class="status" id="status"></div>
-      </div>
+      </form>
     </div>
 
     <!-- Search panel -->
     <div id="panel-search" class="panel">
-      <div class="search-content">
+      <form class="search-content" id="search-form">
         <div class="search-row">
           <input type="text" id="search-input" placeholder="Search your links…" autocomplete="off">
-          <button id="search-btn">Search</button>
+          <button type="submit" id="search-btn">Search</button>
         </div>
         <div class="search-status" id="search-status"></div>
-      </div>
+      </form>
       <div class="results" id="results"></div>
     </div>
   </div>

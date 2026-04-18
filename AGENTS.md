@@ -32,7 +32,7 @@ uv run ruff check --fix .
 
 # Architecture
 
-Two Lambda functions connected by an event-driven pipeline:
+Three Lambda functions: one event-driven ingestion pipeline and one search endpoint.
 
 ```
 Client → API Gateway → store-document Lambda
@@ -40,21 +40,41 @@ Client → API Gateway → store-document Lambda
                               ↓ EventBridge event: "Document stored"
                               ↓ SQS trigger
                        index-documents Lambda
-                              ↓ Index document (downloaded from / uploaded back to S3)
+                              ↓ Embeds document via Amazon Bedrock
+                              ↓ Updates SQLite vector index in S3 (vector-index/index.db)
                               ↓ EventBridge event: "Document indexed"
+
+Client → API Gateway → search-documents Lambda
+                              ↓ Downloads vector-index/index.db from S3 (5-min local cache)
+                              ↓ Embeds query via Amazon Bedrock
+                              ↓ Returns ranked results
 ```
 
 **document-storage-service**: Accepts `PUT /document?url=<url>` with a `multipart/form-data` body. The `document` part must be either `text/html` or `text/plain`. Files are streamed directly to S3 using `StreamingS3Upload` (which handles both small files via `put_object` and larger files via S3 multipart upload). The S3 key prefix is the SHA-256 hash of the URL. A `backup_in_case_of_error` context manager copies existing S3 objects to a `.bak` folder before overwriting, and restores on error.
 
-**index-documents-service**: SQS-triggered. Receives EventBridge events forwarded from SQS. ChromaDB integration is a placeholder — the main remaining work is implementing the indexing logic here.
+**index-documents-service**: SQS-triggered. Receives EventBridge events forwarded from SQS. Downloads the document from S3, generates vector embeddings via Amazon Bedrock Titan Embed Text v2, and writes to a SQLite database (with `sqlite-vec` extension) stored in S3 at `vector-index/index.db`.
+
+**search-documents-service**: Accepts `GET /search?q=<query>&top=<n>` (Bearer token required). Downloads and locally caches the SQLite vector index from S3 (5-minute TTL). Supports three search modes returned as sections: `vector` (KNN semantic search), `title` (substring match on normalized titles), `tags` (hashtag filtering — embed tags in query with `#tagname`). `top` defaults to 5, clamped to [1, 20]. Response shape:
+```json
+{
+  "query": "original query",
+  "parsed": { "text": "query text", "tags": ["tag1"] },
+  "sections": {
+    "vector": [{ "url": "...", "distance": 0.12, "title": "..." }],
+    "title":  [{ "url": "...", "title": "..." }],
+    "tags":   [{ "url": "...", "title": "...", "matched_tags": ["tag1"] }]
+  }
+}
+```
+Only non-empty sections are included. Uses Amazon Bedrock Titan Embed Text v2 (1024 dimensions).
 
 **Authentication**: Bearer token validated via constant-time comparison (`secrets.compare_digest`). Token stored in SSM Parameter Store (type `String`, IAM-protected); parameter name passed via `BEARER_TOKEN_PARAM_NAME` env var. Implemented as an `aws-lambda-powertools` middleware.
 
 **Shared AWS resources** (defined in `cloudformation/templates/main.yaml`):
-- S3 bucket: `just-my-links-<env>` — stores documents and ChromaDB file
+- S3 bucket: `just-my-links-<env>` — stores documents (`document-storage/`) and SQLite vector index (`vector-index/index.db`)
 - EventBridge bus: `just-my-links--events--<env>`
 - SQS queue: `just-my-links--index-documents-trigger--<env>` (with DLQ)
-- Both Lambdas have `reserved_concurrent_executions: 1` (cost control)
+- All three Lambdas have `reserved_concurrent_executions: 1` (cost control)
 
 # Key Technical Notes
 

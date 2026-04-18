@@ -36,17 +36,17 @@ def get_default_region():
     """Get the default region from the current AWS profile."""
     try:
         session = boto3.Session()
-        return session.region_name or 'us-east-1'
+        return session.region_name or "us-east-1"
     except Exception:
-        return 'us-east-1'
+        return "us-east-1"
 
 
 def get_current_account_id():
     """Get the current AWS account ID from the active profile."""
     try:
-        sts_client = boto3.client('sts')
+        sts_client = boto3.client("sts")
         response = sts_client.get_caller_identity()
-        return response['Account']
+        return response["Account"]
     except Exception as e:
         print(f"Warning: Could not get current AWS account ID: {e}")
         return None
@@ -61,12 +61,7 @@ def run_command(cmd, check=True, verbose=False):
             result = subprocess.run(cmd, check=check, text=True)
             return result
         else:
-            result = subprocess.run(
-                cmd,
-                check=check,
-                capture_output=True,
-                text=True
-            )
+            result = subprocess.run(cmd, check=check, capture_output=True, text=True)
             return result
     except subprocess.CalledProcessError as e:
         print(f"Command failed with exit code {e.returncode}")
@@ -77,28 +72,34 @@ def run_command(cmd, check=True, verbose=False):
         raise
 
 
-def authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose=False):
+def authenticate_docker_to_ecr(
+    ecr_repository_uri, aws_region, aws_account_id, verbose=False
+):
     """Authenticate Podman/Docker to ECR."""
     print("Authenticating to ECR...")
 
     # Use aws ecr get-login-password which works better with Podman
     try:
         # Get the ECR password using AWS CLI
-        get_password_cmd = ['aws', 'ecr', 'get-login-password', '--region', aws_region]
+        get_password_cmd = ["aws", "ecr", "get-login-password", "--region", aws_region]
         if verbose:
             print(f"Running: {' '.join(get_password_cmd)}")
 
         password_result = subprocess.run(
-            get_password_cmd,
-            capture_output=True,
-            text=True,
-            check=True
+            get_password_cmd, capture_output=True, text=True, check=True
         )
         password = password_result.stdout.strip()
 
         # Login using podman (which is aliased to docker)
         registry_url = f"{aws_account_id}.dkr.ecr.{aws_region}.amazonaws.com"
-        login_cmd = ['docker', 'login', '--username', 'AWS', '--password-stdin', registry_url]
+        login_cmd = [
+            "docker",
+            "login",
+            "--username",
+            "AWS",
+            "--password-stdin",
+            registry_url,
+        ]
 
         if verbose:
             print(f"Running: {' '.join(login_cmd[:-1])} [password hidden]")
@@ -108,7 +109,7 @@ def authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, v
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE if not verbose else None,
             stderr=subprocess.PIPE if not verbose else None,
-            text=True
+            text=True,
         )
         stdout, stderr = process.communicate(input=password)
 
@@ -132,18 +133,35 @@ def authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, v
         raise
 
 
-def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_id, verbose=False):
+def build_and_push_image(
+    ecr_repository_uri, image_tag, aws_region, aws_account_id, verbose=False
+):
     """Build Docker image and push to ECR."""
     print("Building Docker image...")
 
-    # Build the image
-    document_storage_service_path = Path(__file__).parent.parent / "document-storage-service"
-    run_command(['docker', 'build', '-t', 'document-storage-service', str(document_storage_service_path)], verbose=verbose)
+    # Build the image (context = project root so Dockerfile can resolve shared assets)
+    project_root = Path(__file__).parent.parent
+    dockerfile = project_root / "document-storage-service" / "Dockerfile"
+    run_command(
+        [
+            "docker",
+            "build",
+            "-f",
+            str(dockerfile),
+            "-t",
+            "document-storage-service",
+            str(project_root),
+        ],
+        verbose=verbose,
+    )
 
     # Tag for ECR
     print("Tagging image for ECR...")
     full_image_uri = f"{ecr_repository_uri}:{image_tag}"
-    run_command(['docker', 'tag', 'document-storage-service:latest', full_image_uri], verbose=verbose)
+    run_command(
+        ["docker", "tag", "document-storage-service:latest", full_image_uri],
+        verbose=verbose,
+    )
 
     # Push to ECR with retry logic and re-authentication for Podman
     print("Pushing image to ECR...")
@@ -153,18 +171,20 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
             # Re-authenticate before each push attempt to avoid token expiration
             if attempt > 0:
                 print(f"Re-authenticating before attempt {attempt + 1}...")
-                authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose)
+                authenticate_docker_to_ecr(
+                    ecr_repository_uri, aws_region, aws_account_id, verbose
+                )
 
             # Use --force-compression to avoid blob checking issues with Podman
-            run_command(['docker', 'push', full_image_uri], verbose=verbose)
+            run_command(["docker", "push", full_image_uri], verbose=verbose)
             print(f"Image pushed to ECR: {full_image_uri}")
             return full_image_uri
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError:
             if attempt < max_retries - 1:
                 print(f"Push attempt {attempt + 1} failed, retrying in 10 seconds...")
                 time.sleep(10)  # Wait longer between retries
             else:
-                print(f"All push attempts failed")
+                print("All push attempts failed")
                 raise
 
     return full_image_uri
@@ -172,29 +192,32 @@ def build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_
 
 def update_lambda_function(lambda_function_name, image_uri, aws_region):
     """Update Lambda function if it exists."""
-    lambda_client = boto3.client('lambda', region_name=aws_region)
+    lambda_client = boto3.client("lambda", region_name=aws_region)
 
     print("Checking if Lambda function exists...")
     try:
         lambda_client.get_function(FunctionName=lambda_function_name)
-        print(f"Lambda function {lambda_function_name} exists. Updating function code...")
+        print(
+            f"Lambda function {lambda_function_name} exists. Updating function code..."
+        )
 
         # Update function code
-        response = lambda_client.update_function_code(
-            FunctionName=lambda_function_name,
-            ImageUri=image_uri
+        lambda_client.update_function_code(
+            FunctionName=lambda_function_name, ImageUri=image_uri
         )
 
         print("Waiting for function update to complete...")
-        waiter = lambda_client.get_waiter('function_updated')
+        waiter = lambda_client.get_waiter("function_updated")
         waiter.wait(FunctionName=lambda_function_name)
 
         print("Lambda function updated successfully!")
         return True
 
     except ClientError as e:
-        if e.response['Error']['Code'] == 'ResourceNotFoundException':
-            print(f"Lambda function {lambda_function_name} does not exist. Skipping function update.")
+        if e.response["Error"]["Code"] == "ResourceNotFoundException":
+            print(
+                f"Lambda function {lambda_function_name} does not exist. Skipping function update."
+            )
             print("Deploy the CloudFormation stack to create the Lambda function.")
             return False
         else:
@@ -210,33 +233,28 @@ This script builds the document-storage-service Docker container and deploys it 
 It automatically finds the document-storage-service directory relative to this script's
 location and handles the complete deployment pipeline from build to Lambda update.
     """,
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        'environment',
-        nargs='?',
-        default='dev',
-        help='Environment name (default: dev)'
+        "environment", nargs="?", default="dev", help="Environment name (default: dev)"
     )
     parser.add_argument(
-        '--region',
+        "--region",
         default=get_default_region(),
-        help=f'AWS region (default: {get_default_region()})'
+        help=f"AWS region (default: {get_default_region()})",
     )
     parser.add_argument(
-        '--image-tag',
-        default='latest',
-        help='Docker image tag (default: latest)'
+        "--image-tag", default="latest", help="Docker image tag (default: latest)"
     )
     parser.add_argument(
-        '--aws-account-id',
+        "--aws-account-id",
         default=None,
-        help='AWS Account ID (default: current AWS profile account)'
+        help="AWS Account ID (default: current AWS profile account)",
     )
     parser.add_argument(
-        '--verbose',
-        action='store_true',
-        help='Print verbose output including all command stdout/stderr'
+        "--verbose",
+        action="store_true",
+        help="Print verbose output including all command stdout/stderr",
     )
 
     args = parser.parse_args()
@@ -249,7 +267,9 @@ location and handles the complete deployment pipeline from build to Lambda updat
     verbose = args.verbose
 
     if not aws_account_id:
-        print("Error: Could not determine AWS account ID. Please specify --aws-account-id or ensure AWS credentials are configured.")
+        print(
+            "Error: Could not determine AWS account ID. Please specify --aws-account-id or ensure AWS credentials are configured."
+        )
         sys.exit(1)
 
     # Construct resource names
@@ -260,10 +280,14 @@ location and handles the complete deployment pipeline from build to Lambda updat
 
     try:
         # Authenticate Docker to ECR
-        authenticate_docker_to_ecr(ecr_repository_uri, aws_region, aws_account_id, verbose)
+        authenticate_docker_to_ecr(
+            ecr_repository_uri, aws_region, aws_account_id, verbose
+        )
 
         # Build and push image
-        image_uri = build_and_push_image(ecr_repository_uri, image_tag, aws_region, aws_account_id, verbose)
+        image_uri = build_and_push_image(
+            ecr_repository_uri, image_tag, aws_region, aws_account_id, verbose
+        )
 
         # Update Lambda function if it exists
         update_lambda_function(lambda_function_name, image_uri, aws_region)

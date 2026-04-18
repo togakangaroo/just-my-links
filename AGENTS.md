@@ -21,11 +21,11 @@ uv run ruff check --fix .
 # Deployment
 
 ```bash
-# Deploy CloudFormation infrastructure
-./cloudformation/scripts/deploy.sh [environment]   # defaults to dev
+# Full deploy: builds Docker images, pushes to ECR, deploys CloudFormation
+./deploy.sh [environment]                          # defaults to dev
 ./cloudformation/scripts/validate.sh               # validate templates only
 
-# Deploy Lambda services (builds Docker image, pushes to ECR, updates Lambda)
+# Deploy a single Lambda service (builds Docker image, pushes to ECR, updates Lambda)
 ./scripts/deploy-document-storage-service.py [environment]
 ./scripts/deploy-indexing-service.py [environment]
 ```
@@ -48,7 +48,7 @@ Client → API Gateway → store-document Lambda
 
 **index-documents-service**: SQS-triggered. Receives EventBridge events forwarded from SQS. ChromaDB integration is a placeholder — the main remaining work is implementing the indexing logic here.
 
-**Authentication**: Bearer token validated via constant-time comparison (`secrets.compare_digest`). Token stored in AWS Secrets Manager; ARN passed via `BEARER_TOKEN_SECRET_ARN` env var. Implemented as an `aws-lambda-powertools` middleware.
+**Authentication**: Bearer token validated via constant-time comparison (`secrets.compare_digest`). Token stored in SSM Parameter Store (type `String`, IAM-protected); parameter name passed via `BEARER_TOKEN_PARAM_NAME` env var. Implemented as an `aws-lambda-powertools` middleware.
 
 **Shared AWS resources** (defined in `cloudformation/templates/main.yaml`):
 - S3 bucket: `just-my-links-<env>` — stores documents and ChromaDB file

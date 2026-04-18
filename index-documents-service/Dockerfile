@@ -5,12 +5,12 @@ FROM public.ecr.aws/lambda/python:3.13
 RUN dnf install -y gcc sqlite-devel
 
 # Copy requirements and install dependencies
-COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
+COPY index-documents-service/pyproject.toml ${LAMBDA_TASK_ROOT}/
 RUN pip install uv && \
     uv pip install --system --no-cache-dir -e .
 
-# Copy application code
-COPY src/* ${LAMBDA_TASK_ROOT}/
+# Copy application code (symlinks are resolved against the project-root build context)
+COPY index-documents-service/src/* ${LAMBDA_TASK_ROOT}/
 
 # Set the CMD to your handler
 CMD ["app.lambda_handler"]

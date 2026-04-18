@@ -40,16 +40,17 @@ Conditions:
 Resources:
 
   # ============================================================================
-  # SECRETS RESOURCES
+  # CONFIGURATION RESOURCES
   # ============================================================================
 
-  # Auth Token Secret
-  AuthTokenSecret:
-    Type: AWS::SecretsManager::Secret
+  # Auth Token Parameter
+  AuthTokenParameter:
+    Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "just-my-links--auth-token--${Environment}"
+      Name: !Sub "/just-my-links/auth-token/${Environment}"
+      Type: String
+      Value: !Ref BearerToken
       Description: Bearer token for Just My Links API authentication
-      SecretString: !Ref BearerToken
 
   # ============================================================================
   # STORAGE RESOURCES
@@ -341,14 +342,14 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: SecretsManagerAccess
+        - PolicyName: SSMParameterAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Ref AuthTokenSecret
+                  - ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AuthTokenParameter}"
         - PolicyName: EventBridgeAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -386,14 +387,14 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: SecretsManagerAccess
+        - PolicyName: SSMParameterAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Ref AuthTokenSecret
+                  - ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AuthTokenParameter}"
         - PolicyName: S3ReadAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -474,7 +475,7 @@ Resources:
       ReservedConcurrentExecutions: 1  # Single concurrent execution
       Environment:
         Variables:
-          BEARER_TOKEN_SECRET_ARN: !Ref AuthTokenSecret
+          BEARER_TOKEN_PARAM_NAME: !Ref AuthTokenParameter
           EVENT_BUS_NAME: !Sub "just-my-links--events--${Environment}"
           APPLICATION_BUCKET: !Ref ApplicationBucket
           ENVIRONMENT_NAME: !Ref Environment
@@ -519,7 +520,7 @@ Resources:
         Variables:
           APPLICATION_BUCKET: !Ref ApplicationBucket
           ENVIRONMENT_NAME: !Ref Environment
-          BEARER_TOKEN_SECRET_ARN: !Ref AuthTokenSecret
+          BEARER_TOKEN_PARAM_NAME: !Ref AuthTokenParameter
 
   # API Gateway HTTP API
   DocumentStorageHttpApi:
@@ -662,11 +663,11 @@ Outputs:
     Description: Index Documents ECR Repository URI
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${IndexDocumentsEcrRepository}"
 
-  AuthTokenSecretName:
-    Description: Name of the auth token secret in Secrets Manager
-    Value: !Ref AuthTokenSecret
+  AuthTokenParameterName:
+    Description: Name of the auth token parameter in SSM Parameter Store
+    Value: !Ref AuthTokenParameter
     Export:
-      Name: !Sub "just-my-links--auth-token-secret-name--${Environment}"
+      Name: !Sub "just-my-links--auth-token-param-name--${Environment}"
 
   EventBusName:
     Description: EventBridge event bus name

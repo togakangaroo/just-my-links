@@ -35,6 +35,115 @@ EMBEDDING_DIMENSIONS = 1024
 MAX_CHUNK_CHARS = 2000  # ≈ 500 tokens at ~4 chars/token
 OVERLAP_CHARS = 200  # ≈ 50 tokens of overlap between chunks
 
+# ---------------------------------------------------------------------------
+# Title normalisation
+# ---------------------------------------------------------------------------
+
+STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "not",
+        "no",
+        "nor",
+        "so",
+        "yet",
+        "both",
+        "either",
+        "neither",
+        "that",
+        "this",
+        "these",
+        "those",
+        "it",
+        "its",
+        "itself",
+        "he",
+        "she",
+        "they",
+        "them",
+        "their",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "any",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "into",
+        "through",
+        "as",
+        "if",
+        "up",
+        "about",
+        "against",
+        "between",
+        "because",
+        "than",
+        "after",
+        "before",
+        "during",
+        "under",
+        "over",
+        "then",
+    }
+)
+
+
+def normalize_title(text: str) -> str:
+    """Lowercase, strip # marks, remove stop words.
+
+    Used to compute the searchable `title` column at index time and to
+    normalise the text portion of a query at search time.
+    """
+    words = text.lower().replace("#", "").split()
+    return " ".join(w for w in words if w and w not in STOP_WORDS)
+
 
 # ---------------------------------------------------------------------------
 # Env vars
@@ -91,12 +200,52 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS documents (
-            url   TEXT PRIMARY KEY,
-            title TEXT
+            url        TEXT PRIMARY KEY,
+            full_title TEXT,
+            title      TEXT
+        )
+    """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS document_tags (
+            url  TEXT NOT NULL REFERENCES documents(url),
+            tag  TEXT NOT NULL,
+            PRIMARY KEY (url, tag)
+        )
+    """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS migrations (
+            name       TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
     )
     conn.commit()
+
+
+def _parse_title(raw: str) -> tuple[str, str, list[str]]:
+    """Parse raw title into (full_title, normalized_title, tags).
+
+    full_title       — original words with # tokens removed (for display)
+    normalized_title — lower-cased, # marks + stop words stripped (for search)
+    tags             — words that carried a # prefix, lower-cased
+    """
+    tags: list[str] = []
+    non_tag_words: list[str] = []
+    for word in raw.split():
+        if word.startswith("#"):
+            tag = word.lstrip("#").lower()
+            if tag:
+                tags.append(tag)
+        else:
+            non_tag_words.append(word)
+    return " ".join(non_tag_words), normalize_title(raw), tags
 
 
 def _serialize_embedding(embedding: list[float]) -> bytes:
@@ -245,13 +394,31 @@ def upsert_document(
             (chunk_id, _serialize_embedding(embedding)),
         )
 
+    if title is not None:
+        full_title, normalized_title, tags = _parse_title(title)
+    else:
+        full_title, normalized_title, tags = None, None, []
+
     conn.execute(
-        "INSERT INTO documents (url, title) VALUES (?, ?) ON CONFLICT(url) DO UPDATE SET title = excluded.title",
-        (url, title),
+        """
+        INSERT INTO documents (url, full_title, title) VALUES (?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            full_title = excluded.full_title,
+            title      = excluded.title
+        """,
+        (url, full_title, normalized_title),
     )
 
+    conn.execute("DELETE FROM document_tags WHERE url = ?", (url,))
+    for tag in tags:
+        conn.execute(
+            "INSERT OR IGNORE INTO document_tags (url, tag) VALUES (?, ?)",
+            (url, tag),
+        )
+
     logger.info(
-        "Upserted document chunks", extra={"url": url, "chunk_count": len(chunks)}
+        "Upserted document chunks",
+        extra={"url": url, "chunk_count": len(chunks), "tag_count": len(tags)},
     )
 
 

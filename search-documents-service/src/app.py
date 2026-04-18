@@ -3,6 +3,7 @@ import os
 import secrets
 import struct
 import time
+from pathlib import Path
 
 try:
     import pysqlite3 as sqlite3  # Lambda's built-in sqlite3 disables enable_load_extension  # pyright: ignore[reportMissingImports]
@@ -40,103 +41,10 @@ EMBEDDING_DIMENSIONS = 1024
 INDEX_CACHE_TTL_SECONDS = 300  # refresh index from S3 every 5 minutes
 
 # ---------------------------------------------------------------------------
-# Title normalisation (kept in sync with index-documents-service)
+# Title normalisation
 # ---------------------------------------------------------------------------
 
-STOP_WORDS = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "and",
-        "or",
-        "but",
-        "in",
-        "on",
-        "at",
-        "to",
-        "for",
-        "of",
-        "with",
-        "by",
-        "from",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "shall",
-        "can",
-        "not",
-        "no",
-        "nor",
-        "so",
-        "yet",
-        "both",
-        "either",
-        "neither",
-        "that",
-        "this",
-        "these",
-        "those",
-        "it",
-        "its",
-        "itself",
-        "he",
-        "she",
-        "they",
-        "them",
-        "their",
-        "what",
-        "which",
-        "who",
-        "whom",
-        "when",
-        "where",
-        "why",
-        "how",
-        "all",
-        "each",
-        "every",
-        "any",
-        "few",
-        "more",
-        "most",
-        "other",
-        "some",
-        "such",
-        "into",
-        "through",
-        "as",
-        "if",
-        "up",
-        "about",
-        "against",
-        "between",
-        "because",
-        "than",
-        "after",
-        "before",
-        "during",
-        "under",
-        "over",
-        "then",
-    }
-)
+STOP_WORDS = frozenset((Path(__file__).parent / "stop-words.txt").read_text().split())
 
 
 def normalize_title(text: str) -> str:

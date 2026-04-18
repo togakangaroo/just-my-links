@@ -60,23 +60,24 @@ Afterwards, you'll need to log in with the following occasionally
 
 ### Deploying
 
-
 #### First-time setup
 
-Deploy infrastructure (ECR, S3, SQS, EventBridge) without Lambda functions (images don't exist yet)
+Deploy infrastructure (ECR, S3, SQS, EventBridge) without Lambda functions (images don't exist yet).
+
+> `deploy.sh` lives at the project root because Docker builds require the entire repo as the build context — Lambda images are built from service-specific Dockerfiles but share assets (e.g. `assets/stop-words.txt`) via symlinks that only resolve when the context is the repo root.
 
 
 ```python
-!cd cloudformation && IsFirstRun=true AWS_PROFILE=just-my-links ./scripts/deploy.sh
+!IsFirstRun=true AWS_PROFILE=just-my-links ./deploy.sh
 ```
 
 #### Subsequent deploys
 
-Bilds Docker images, pushes to ECR, updates CloudFormation and Lambda
+Builds Docker images, pushes to ECR, updates CloudFormation and Lambda.
 
 
 ```python
-!cd cloudformation && AWS_PROFILE=just-my-links ./scripts/deploy.sh dev
+!AWS_PROFILE=just-my-links ./deploy.sh dev
 ```
 
 ### Getting Your API Credentials

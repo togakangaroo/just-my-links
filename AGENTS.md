@@ -21,11 +21,11 @@ uv run ruff check --fix .
 # Deployment
 
 ```bash
-# Deploy CloudFormation infrastructure
-./cloudformation/scripts/deploy.sh [environment]   # defaults to dev
+# Full deploy: builds Docker images, pushes to ECR, deploys CloudFormation
+./deploy.sh [environment]                          # defaults to dev
 ./cloudformation/scripts/validate.sh               # validate templates only
 
-# Deploy Lambda services (builds Docker image, pushes to ECR, updates Lambda)
+# Deploy a single Lambda service (builds Docker image, pushes to ECR, updates Lambda)
 ./scripts/deploy-document-storage-service.py [environment]
 ./scripts/deploy-indexing-service.py [environment]
 ```

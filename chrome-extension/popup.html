@@ -180,6 +180,17 @@
       margin-top: 4px;
     }
 
+    .section-header {
+      padding: 5px 16px 3px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #999;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      background: #f7f7f7;
+      border-top: 1px solid #ececec;
+    }
+
     .result-item {
       padding: 10px 16px;
       border-bottom: 1px solid #f5f5f5;
@@ -206,6 +217,42 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .result-tags {
+      margin-top: 3px;
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .result-tags .tag {
+      font-size: 10px;
+      background: #e8eaf6;
+      color: #3949ab;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    #stats-stripe {
+      display: block;
+      width: 100%;
+      background: #000;
+      min-height: 10px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: monospace;
+      padding: 0 16px;
+      color: transparent;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: color 0.15s, padding 0.15s;
+    }
+
+    #stats-stripe.revealed {
+      color: #00ff41;
+      padding: 6px 16px;
     }
 
     /* Not configured */
@@ -278,6 +325,7 @@
         <div class="search-status" id="search-status"></div>
       </form>
       <div class="results" id="results"></div>
+      <output id="stats-stripe"></output>
     </div>
   </div>
 

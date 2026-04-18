@@ -114,47 +114,120 @@ const searchInput = document.getElementById('search-input');
 const searchBtn = document.getElementById('search-btn');
 const searchStatus = document.getElementById('search-status');
 const resultsEl = document.getElementById('results');
+const statsStripe = document.getElementById('stats-stripe');
+
+const SECTION_LABELS = { vector: 'Semantic', title: 'Title Match', tags: 'Tags' };
+const STATS_KEY = 'jml-search-stats';
+
+function getStats() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function recordImpression(section) {
+  const s = getStats();
+  if (!s[section]) s[section] = { clicks: 0, impressions: 0 };
+  s[section].impressions++;
+  localStorage.setItem(STATS_KEY, JSON.stringify(s));
+}
+
+function recordClick(section) {
+  const s = getStats();
+  if (!s[section]) s[section] = { clicks: 0, impressions: 0 };
+  s[section].clicks++;
+  localStorage.setItem(STATS_KEY, JSON.stringify(s));
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 function setSearchStatus(message, type = '') {
   searchStatus.textContent = message;
   searchStatus.className = `search-status ${type}`;
 }
 
-function renderResults(results) {
-  resultsEl.innerHTML = '';
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
-  if (results.length === 0) {
+function resolveTitle(url, title) {
+  if (title) return title;
+  try {
+    const p = new URL(url);
+    return (p.hostname + p.pathname).replace(/\/$/, '');
+  } catch { return url; }
+}
+
+function renderResults(sections) {
+  resultsEl.innerHTML = '';
+  statsStripe.className = '';    // re-hide on each new search
+  statsStripe.textContent = '';
+
+  const keys = Object.keys(sections || {}).filter(k => sections[k]?.length);
+  if (keys.length === 0) {
     setSearchStatus('No results found.');
     return;
   }
 
   setSearchStatus('');
-  results.forEach(({ url, title }) => {
-    const item = document.createElement('div');
-    item.className = 'result-item';
+  keys.forEach(k => recordImpression(k));
 
-    let displayTitle = title;
-    if (!displayTitle) {
-      try {
-        const parsed = new URL(url);
-        displayTitle = (parsed.hostname + parsed.pathname).replace(/\/$/, '');
-      } catch (_) {
-        displayTitle = url;
-      }
-    }
+  shuffle(keys).forEach(section => {
+    const items = sections[section];
 
-    item.innerHTML = `
-      <div class="result-title">${escapeHtml(displayTitle)}</div>
-      <div class="result-url">${escapeHtml(url)}</div>
-    `;
-    item.addEventListener('click', () => chrome.tabs.create({ url }));
-    resultsEl.appendChild(item);
+    const header = document.createElement('div');
+    header.className = 'section-header';
+    header.textContent = SECTION_LABELS[section] || section;
+    resultsEl.appendChild(header);
+
+    items.forEach(({ url, title, matched_tags }) => {
+      const item = document.createElement('div');
+      item.className = 'result-item';
+
+      const tagsHtml = matched_tags?.length
+        ? `<div class="result-tags">${matched_tags.map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}</div>`
+        : '';
+
+      item.innerHTML = `
+        <div class="result-title">${escapeHtml(resolveTitle(url, title))}</div>
+        <div class="result-url">${escapeHtml(url)}</div>
+        ${tagsHtml}
+      `;
+
+      item.addEventListener('click', (e) => {
+        recordClick(section);
+        if (e.ctrlKey) {
+          chrome.tabs.create({ url, active: false });
+          // popup stays open — new tab opened in background
+        } else {
+          chrome.tabs.create({ url });
+        }
+      });
+
+      resultsEl.appendChild(item);
+    });
   });
 }
 
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+statsStripe.addEventListener('click', () => {
+  if (statsStripe.classList.contains('revealed')) {
+    statsStripe.classList.remove('revealed');
+    statsStripe.textContent = '';
+    return;
+  }
+  const stats = getStats();
+  const text = Object.entries(stats)
+    .map(([k, v]) => `${SECTION_LABELS[k] || k}: ${v.clicks}c / ${v.impressions}i`)
+    .join('   ');
+  statsStripe.textContent = text || 'No data yet';
+  statsStripe.classList.add('revealed');
+});
 
 async function doSearch(apiUrl, token) {
   const query = searchInput.value.trim();
@@ -169,12 +242,10 @@ async function doSearch(apiUrl, token) {
       headers: { 'Authorization': `Bearer ${token}` },
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const { results } = await response.json();
-    renderResults(results);
+    const { sections } = await response.json();
+    renderResults(sections);
   } catch (err) {
     setSearchStatus(`Error: ${err.message}`, 'error');
   } finally {
@@ -187,6 +258,8 @@ async function doSearch(apiUrl, token) {
 // ---------------------------------------------------------------------------
 
 async function init() {
+  console.log('[JML] Search stats:', getStats());
+
   const { apiUrl, bearerToken } = await chrome.storage.local.get(['apiUrl', 'bearerToken']);
 
   if (!apiUrl || !bearerToken) {

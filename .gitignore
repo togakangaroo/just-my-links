@@ -5,3 +5,13 @@ __pycache__
 .pytest_cache
 *.pyc
 .coverage
+
+# Android
+*.hprof
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/captures/
+android/.idea/
+android/**/*.iml

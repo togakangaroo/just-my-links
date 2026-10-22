@@ -3,7 +3,7 @@ FROM public.ecr.aws/lambda/python:3.13
 
 # Copy requirements and install dependencies
 COPY document-storage-service/pyproject.toml ${LAMBDA_TASK_ROOT}/
-RUN pip install uv && \
+RUN pip install --upgrade pip "uv==0.13.4" && \
     uv pip install --system --no-cache-dir .
 
 # Copy application code

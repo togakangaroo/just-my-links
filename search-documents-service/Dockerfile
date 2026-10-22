@@ -6,7 +6,7 @@ RUN dnf install -y gcc sqlite-devel
 
 # Copy requirements and install dependencies
 COPY search-documents-service/pyproject.toml ${LAMBDA_TASK_ROOT}/
-RUN pip install uv && \
+RUN pip install --upgrade pip "uv==0.13.4" && \
     uv pip install --system --no-cache-dir -e .
 
 # Copy application code (symlinks are resolved against the project-root build context)

@@ -31,15 +31,15 @@ aws ecr get-login-password --region "$AWS_REGION" \
     | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 echo "Building document-storage-service image..."
-docker build --pull -f "${SCRIPT_DIR}/document-storage-service/Dockerfile" -t "document-storage-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
+docker build --pull --platform linux/arm64 -f "${SCRIPT_DIR}/document-storage-service/Dockerfile" -t "document-storage-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
 docker tag "document-storage-service:${IMAGE_TAG}" "${STORE_DOCUMENT_REPO}:${IMAGE_TAG}"
 
 echo "Building index-documents-service image..."
-docker build --pull -f "${SCRIPT_DIR}/index-documents-service/Dockerfile" -t "index-documents-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
+docker build --pull --platform linux/arm64 -f "${SCRIPT_DIR}/index-documents-service/Dockerfile" -t "index-documents-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
 docker tag "index-documents-service:${IMAGE_TAG}" "${INDEX_DOCUMENTS_REPO}:${IMAGE_TAG}"
 
 echo "Building search-documents-service image..."
-docker build --pull -f "${SCRIPT_DIR}/search-documents-service/Dockerfile" -t "search-documents-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
+docker build --pull --platform linux/arm64 -f "${SCRIPT_DIR}/search-documents-service/Dockerfile" -t "search-documents-service:${IMAGE_TAG}" "${SCRIPT_DIR}"
 docker tag "search-documents-service:${IMAGE_TAG}" "${SEARCH_DOCUMENTS_REPO}:${IMAGE_TAG}"
 
 echo "Pushing images to ECR..."

@@ -146,6 +146,8 @@ def build_and_push_image(
         [
             "docker",
             "build",
+            "--platform",
+            "linux/arm64",
             "-f",
             str(dockerfile),
             "-t",
